@@ -1,0 +1,31 @@
+{
+  "params": {
+    "r": 0.02,
+    "mu": 0.08,
+    "sigma": 0.2,
+    "gamma": 2.0,
+    "rho": 0.08
+  },
+  "policy": {
+    "pi": 0.75,
+    "kappa": 0.06125
+  },
+  "train_cfg": {
+    "seed": 0,
+    "batch_size": 512,
+    "num_steps": 4000,
+    "learning_rate": 0.005,
+    "dt": 0.003968253968253968,
+    "wealth_min": 0.3,
+    "wealth_max": 3.0,
+    "eval_points": 200,
+    "beta": 0.5,
+    "device": "cpu",
+    "log_every": 100
+  },
+  "critic": "scalar",
+  "loss": "beta_dtd",
+  "mae": 97.32998148464738,
+  "rmse": 115.61016094503346,
+  "mape": 0.27968248371918153
+}

@@ -250,28 +250,28 @@ Because the exact value is known for every constant policy, you can always compu
 
 The one-step TD residual is
 
-\[
+$$
 \delta_{TD} = U(c_t)\Delta t + e^{-\rho \Delta t}V(W_{t+\Delta t}) - V(W_t).
-\]
+$$
 
 ### dTD
 
 The differential residual is
 
-\[
+$$
 \delta_{dTD} = U(c_t)
 + \frac{\Delta W_t}{\Delta t}V_w(W_t)
 + \frac{1}{2}\frac{(\Delta W_t)^2}{\Delta t}V_{ww}(W_t)
 - \rho V(W_t).
-\]
+$$
 
 ### beta-dTD
 
 A weighted hybrid:
 
-\[
+$$
 (1-\beta)\,\delta_{TD}^2 + \beta\,(\Delta t\,\delta_{dTD})^2.
-\]
+$$
 
 This is usually the most stable place to start.
 

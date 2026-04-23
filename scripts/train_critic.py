@@ -27,9 +27,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--beta", type=float, default=0.5)
 
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--batch-size", type=int, default=512)
-    parser.add_argument("--num-steps", type=int, default=4000)
-    parser.add_argument("--lr", type=float, default=5e-3)
+    parser.add_argument("--batch-size", type=int, default=2048)
+    parser.add_argument("--num-steps", type=int, default=12000)
+    parser.add_argument("--lr", type=float, default=2e-3)
     parser.add_argument("--dt", type=float, default=1.0 / 252.0)
     parser.add_argument("--wealth-min", type=float, default=0.3)
     parser.add_argument("--wealth-max", type=float, default=3.0)

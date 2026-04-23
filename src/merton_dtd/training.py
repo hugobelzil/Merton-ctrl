@@ -13,6 +13,7 @@ from .critic import MLPCRRACritic, ScalarCRRACritic
 from .eval import evaluate_critic_on_grid
 from .losses import compute_loss, make_batch
 from .sampling import sample_log_uniform
+from .merton import exact_value_coefficient
 
 
 CRITIC_TYPES = {
@@ -22,11 +23,8 @@ CRITIC_TYPES = {
 
 
 def build_critic(name: str, params: MertonParams, policy: PolicyParams, device: str = "cpu"):
-    # Heuristic initialization based on the exact scaling of the CRRA solution form.
-    # This is not the exact answer unless the policy is optimal, but it places the critic
-    # on the right numerical scale and makes local training much easier.
-    approx_A = max(policy.kappa ** (1.0 - params.gamma) / params.rho, 1e-8)
-    init_log_A = float(torch.log(torch.tensor(approx_A)).item())
+    exact_A = exact_value_coefficient(params, policy)
+    init_log_A = float(torch.log(torch.tensor(exact_A)).item())
 
     if name == "scalar":
         critic = ScalarCRRACritic(params, init_log_A=init_log_A)

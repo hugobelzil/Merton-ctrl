@@ -13,8 +13,8 @@
   "train_cfg": {
     "seed": 0,
     "batch_size": 2048,
-    "num_steps": 12000,
-    "learning_rate": 0.002,
+    "num_steps": 20000,
+    "learning_rate": 0.0003,
     "dt": 0.003968253968253968,
     "wealth_min": 0.3,
     "wealth_max": 3.0,
@@ -24,8 +24,8 @@
     "log_every": 100
   },
   "critic": "mlp",
-  "loss": "beta_dtd",
-  "mae": 96.40763041636454,
-  "rmse": 146.83661550360338,
-  "mape": 0.2523551237452486
+  "loss": "td",
+  "mae": 10.515856222872149,
+  "rmse": 13.712106272050173,
+  "mape": 0.025562249899512068
 }

@@ -50,45 +50,45 @@ It is the local starter version you can actually understand and run fast.
 
 We use the infinite-horizon Merton problem
 
-\[
+$$
 \frac{dW_t}{W_t} = \big(r + \pi_t(\mu-r) - \kappa_t\big) dt + \pi_t \sigma dB_t,
 \qquad c_t = \kappa_t W_t.
-\]
+$$
 
 Objective:
 
-\[
+$$
 \mathbb E\left[ \int_0^\infty e^{-\rho t} U(c_t)\,dt \right],
 \qquad U(c)=\frac{c^{1-\gamma}}{1-\gamma}, \quad \gamma \neq 1.
-\]
+$$
 
 In this starter repo we restrict to **constant policies**:
 
-\[
+$$
 \pi_t \equiv \pi, \qquad \kappa_t \equiv \kappa.
-\]
+$$
 
 For any such constant policy, the exact value has the form
 
-\[
+$$
 V^{\pi,\kappa}(w)=A(\pi,\kappa)\frac{w^{1-\gamma}}{1-\gamma},
-\]
+$$
 
 with
 
-\[
+$$
 A(\pi,\kappa)=
 \frac{\kappa^{1-\gamma}}
 {\rho-(1-\gamma)\left[r+\pi(\mu-r)-\kappa-\frac{1}{2}\gamma\pi^2\sigma^2\right]}.
-\]
+$$
 
 The closed-form optimal policy is
 
-\[
+$$
 \pi^* = \frac{\mu-r}{\gamma\sigma^2},
 \qquad
 \kappa^* = \frac{\rho-(1-\gamma)\left(r + \frac{1}{2}\frac{(\mu-r)^2}{\gamma\sigma^2}\right)}{\gamma}.
-\]
+$$
 
 This is why the repo is so light: you can always compare your learned critic to the exact answer.
 

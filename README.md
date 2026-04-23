@@ -259,10 +259,10 @@ $$
 The differential residual is
 
 $$
-\delta_{dTD} = U(c_t)
-+ \frac{\Delta W_t}{\Delta t}V_w(W_t)
-+ \frac{1}{2}\frac{(\Delta W_t)^2}{\Delta t}V_{ww}(W_t)
-- \rho V(W_t).
+\delta_{dTD} = U(c_t) \\ 
+\frac{\Delta W_t}{\Delta t}V_w(W_t) \\
+\frac{1}{2}\frac{(\Delta W_t)^2}{\Delta t}V_{ww}(W_t) \\
+\rho V(W_t).
 $$
 
 ### beta-dTD

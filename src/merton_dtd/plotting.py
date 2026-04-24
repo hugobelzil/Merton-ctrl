@@ -8,49 +8,95 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+def _nice_log_ticks(xmin: float, xmax: float) -> np.ndarray:
+    """
+    Return log-scale ticks spanning the full range [xmin, xmax].
+    """
+    xmin = max(float(xmin), 1e-12)
+    xmax = max(float(xmax), xmin * 1.000001)
+
+    e_min = int(np.floor(np.log10(xmin)))
+    e_max = int(np.ceil(np.log10(xmax)))
+    ticks = 10.0 ** np.arange(e_min, e_max + 1)
+
+    # Keep only ticks inside the visible range, but ensure endpoints are covered
+    ticks = ticks[(ticks >= xmin * 0.999) & (ticks <= xmax * 1.001)]
+    if ticks.size == 0:
+        ticks = np.array([xmin, xmax])
+    return ticks
+
+
 def plot_value_fit(result: dict, out_file: str | Path) -> None:
     summary = result["summary"]
-    wealth = np.asarray(summary["wealth"])
-    truth = np.asarray(summary["truth"])
-    pred = np.asarray(summary["pred"])
+    wealth = np.asarray(summary["wealth"], dtype=float)
+    truth = np.asarray(summary["truth"], dtype=float)
+    pred = np.asarray(summary["pred"], dtype=float)
 
-    fig, ax = plt.subplots(figsize=(7, 4.5))
-    ax.plot(wealth, truth, label="exact value")
-    ax.plot(wealth, pred, label="critic prediction", linestyle="--")
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    ax.plot(wealth, truth, label="Exact closed-form value", linewidth=2.2)
+    ax.plot(wealth, pred, label="Neural critic prediction", linestyle="--", linewidth=2.0)
+
     ax.set_xscale("log")
-    ax.set_xlabel("wealth")
-    ax.set_ylabel("value")
-    ax.set_title("Merton fixed-policy value fit")
-    ax.legend()
+    ax.set_xlim(wealth.min(), wealth.max())
+
+    ticks = _nice_log_ticks(wealth.min(), wealth.max())
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([f"{t:g}" for t in ticks])
+
+    ax.set_xlabel("Current wealth $W_t$")
+    ax.set_ylabel("Value $V(W_t)$")
+    ax.set_title("Fixed-policy Merton problem:\nExact value function vs learned critic")
+    ax.grid(True, which="both", linestyle=":", alpha=0.5)
+    ax.legend(frameon=True)
     fig.tight_layout()
+
     Path(out_file).parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_file, dpi=150)
+    fig.savefig(out_file, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
 def plot_training_curves(result: dict, out_file: str | Path) -> None:
     history = result["history"]
-    steps = np.asarray(history["step"])
+    steps = np.asarray(history["step"], dtype=float)
+    loss = np.asarray(history["loss"], dtype=float)
+    td_mse = np.asarray(history["td_mse"], dtype=float)
+    dtd_mse = np.asarray(history["dtd_scaled_mse"], dtype=float)
+    mae = np.asarray(history["mae"], dtype=float)
+    rmse = np.asarray(history["rmse"], dtype=float)
 
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4.2))
-    axes[0].plot(steps, history["loss"], label="train loss")
-    axes[0].plot(steps, history["td_mse"], label="TD MSE", linestyle="--")
-    axes[0].plot(steps, history["dtd_scaled_mse"], label="scaled dTD MSE", linestyle=":")
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.8))
+
+    # Left panel: training losses
+    axes[0].plot(steps, loss, label="Total training loss", linewidth=2.0)
+    axes[0].plot(steps, td_mse, label="TD loss component", linestyle="--", linewidth=1.8)
+    axes[0].plot(steps, dtd_mse, label="dTD loss component", linestyle=":", linewidth=2.0)
+
     axes[0].set_yscale("log")
-    axes[0].set_xlabel("training step")
-    axes[0].set_title("critic losses")
-    axes[0].legend()
+    axes[0].set_xlim(steps.min(), steps.max())
+    axes[0].set_xlabel("Training step")
+    axes[0].set_ylabel("Loss (log scale)")
+    axes[0].set_title("Training losses over optimization")
+    axes[0].grid(True, which="both", linestyle=":", alpha=0.5)
+    axes[0].legend(frameon=True)
 
-    axes[1].plot(steps, history["mae"], label="MAE")
-    axes[1].plot(steps, history["rmse"], label="RMSE", linestyle="--")
+    # Right panel: error against exact solution
+    axes[1].plot(steps, mae, label="MAE", linewidth=2.0)
+    axes[1].plot(steps, rmse, label="RMSE", linestyle="--", linewidth=1.8)
+
     axes[1].set_yscale("log")
-    axes[1].set_xlabel("training step")
-    axes[1].set_title("error vs exact value")
-    axes[1].legend()
+    axes[1].set_xlim(steps.min(), steps.max())
+    axes[1].set_xlabel("Training step")
+    axes[1].set_ylabel("Error vs exact value (log scale)")
+    axes[1].set_title("Critic accuracy against closed-form benchmark")
+    axes[1].grid(True, which="both", linestyle=":", alpha=0.5)
+    axes[1].legend(frameon=True)
 
-    fig.tight_layout()
+    fig.suptitle("Merton fixed-policy critic training summary", fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+
     Path(out_file).parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_file, dpi=150)
+    fig.savefig(out_file, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -61,18 +107,35 @@ def plot_policy_heatmap(
     out_file: str | Path,
     title: str,
 ) -> None:
-    fig, ax = plt.subplots(figsize=(7, 5))
+    values = np.asarray(values, dtype=float)
+    pi_grid = np.asarray(pi_grid, dtype=float)
+    kappa_grid = np.asarray(kappa_grid, dtype=float)
+
+    fig, ax = plt.subplots(figsize=(8, 5.5))
+
     im = ax.imshow(
         values,
         origin="lower",
         aspect="auto",
         extent=[pi_grid[0], pi_grid[-1], kappa_grid[0], kappa_grid[-1]],
     )
-    ax.set_xlabel("risky weight pi")
-    ax.set_ylabel("consumption rate kappa")
-    ax.set_title(title)
-    fig.colorbar(im, ax=ax, label="value at wealth=1")
+
+    ax.set_xlim(pi_grid[0], pi_grid[-1])
+    ax.set_ylim(kappa_grid[0], kappa_grid[-1])
+
+    # Put explicit ticks across the whole plotting range
+    ax.set_xticks(np.linspace(pi_grid[0], pi_grid[-1], num=min(7, len(pi_grid))))
+    ax.set_yticks(np.linspace(kappa_grid[0], kappa_grid[-1], num=min(7, len(kappa_grid))))
+
+    ax.set_xlabel("Risky portfolio weight $\\pi$")
+    ax.set_ylabel("Consumption rate $\\kappa$")
+    ax.set_title(f"{title}\nValue at reference wealth $W=1$")
+    ax.grid(False)
+
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label("Value function at $W=1$")
+
     fig.tight_layout()
     Path(out_file).parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_file, dpi=150)
+    fig.savefig(out_file, dpi=150, bbox_inches="tight")
     plt.close(fig)

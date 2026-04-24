@@ -22,7 +22,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pi", type=float, default=0.75)
     parser.add_argument("--kappa", type=float, default=0.06125)
 
-    parser.add_argument("--critic", type=str, default="scalar", choices=["scalar", "mlp"])
+    parser.add_argument(
+    "--critic",
+    type=str,
+    default="scalar",
+    choices=["scalar", "mlp", "vanilla_mlp"])
     parser.add_argument("--loss", type=str, default="beta_dtd", choices=["td", "dtd", "beta_dtd"])
     parser.add_argument("--beta", type=float, default=0.5)
 

@@ -9,7 +9,7 @@ from torch.optim import Adam
 from tqdm import trange
 
 from .config import MertonParams, PolicyParams, TrainConfig
-from .critic import MLPCRRACritic, ScalarCRRACritic
+from .critic import MLPCRRACritic, ScalarCRRACritic, VanillaMLPCritic
 from .eval import evaluate_critic_on_grid
 from .losses import compute_loss, make_batch
 from .sampling import sample_log_uniform
@@ -19,6 +19,7 @@ from .merton import exact_value_coefficient
 CRITIC_TYPES = {
     "scalar": ScalarCRRACritic,
     "mlp": MLPCRRACritic,
+    "vanilla_mlp": VanillaMLPCritic,
 }
 
 
@@ -30,10 +31,12 @@ def build_critic(name: str, params: MertonParams, policy: PolicyParams, device: 
         critic = ScalarCRRACritic(params, init_log_A=init_log_A)
     elif name == "mlp":
         critic = MLPCRRACritic(params, init_log_A=init_log_A)
+    elif name == "vanilla_mlp":
+        critic = VanillaMLPCritic(params)
     else:
         raise ValueError(f"Unknown critic type: {name}")
-    return critic.to(device)
 
+    return critic.to(device)
 
 def train_fixed_policy_critic(
     params: MertonParams,

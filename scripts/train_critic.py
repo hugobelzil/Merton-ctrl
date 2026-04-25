@@ -22,11 +22,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pi", type=float, default=0.75)
     parser.add_argument("--kappa", type=float, default=0.06125)
 
-    parser.add_argument(
-    "--critic",
-    type=str,
-    default="scalar",
-    choices=["scalar", "mlp", "vanilla_mlp"])
     parser.add_argument("--loss", type=str, default="beta_dtd", choices=["td", "dtd", "beta_dtd"])
     parser.add_argument("--beta", type=float, default=0.5)
 
@@ -67,7 +62,6 @@ def main() -> None:
         params=params,
         policy=policy,
         train_cfg=train_cfg,
-        critic_name=args.critic,
         loss_name=args.loss,
     )
 
@@ -77,21 +71,12 @@ def main() -> None:
     plot_training_curves(result, out_dir / "training_curves.png")
     plot_value_fit(result, out_dir / "value_fit.png")
 
-    summary = {
+    # numpy arrays inside result["summary"] are not JSON serializable; keep only scalars in summary.json
+    serializable = {
         "params": asdict(params),
         "policy": asdict(policy),
         "train_cfg": asdict(train_cfg),
-        "critic": args.critic,
         "loss": args.loss,
-        "summary": result["summary"],
-    }
-    # numpy arrays inside result["summary"] are not JSON serializable; keep only scalars in summary.json
-    serializable = {
-        "params": summary["params"],
-        "policy": summary["policy"],
-        "train_cfg": summary["train_cfg"],
-        "critic": summary["critic"],
-        "loss": summary["loss"],
         "mae": result["summary"]["mae"],
         "rmse": result["summary"]["rmse"],
         "mape": result["summary"]["mape"],

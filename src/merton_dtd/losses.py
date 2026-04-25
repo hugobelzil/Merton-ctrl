@@ -138,9 +138,6 @@ def compute_loss(
       - td       : mean(delta_TD^2)
       - dtd      : mean(delta_dTD^2)
       - beta_dtd : (1-beta) * mean(delta_TD^2) + beta * mean(delta_dTD^2)
-
-    We keep the metric key name 'dtd_scaled_mse' only so the rest of the repo
-    does not break, even though it is now just the dTD MSE (not a scaled raw residual).
     """
     td = td_residual(
         critic=critic,
@@ -174,8 +171,7 @@ def compute_loss(
 
     metrics = {
         "td_mse": float(td_mse.detach().cpu()),
-        # keep old key name for compatibility with training.py / plotting.py
-        "dtd_scaled_mse": float(dtd_mse.detach().cpu()),
+        "dtd_mse": float(dtd_mse.detach().cpu()),
         "loss": float(loss.detach().cpu()),
     }
     return loss, metrics

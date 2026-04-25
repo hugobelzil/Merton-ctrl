@@ -61,7 +61,7 @@ def plot_training_curves(result: dict, out_file: str | Path) -> None:
     steps = np.asarray(history["step"], dtype=float)
     loss = np.asarray(history["loss"], dtype=float)
     td_mse = np.asarray(history["td_mse"], dtype=float)
-    dtd_mse = np.asarray(history["dtd_scaled_mse"], dtype=float)
+    dtd_mse = np.asarray(history["dtd_mse"], dtype=float)
     mae = np.asarray(history["mae"], dtype=float)
     rmse = np.asarray(history["rmse"], dtype=float)
 
@@ -100,42 +100,3 @@ def plot_training_curves(result: dict, out_file: str | Path) -> None:
     plt.close(fig)
 
 
-def plot_policy_heatmap(
-    values: np.ndarray,
-    pi_grid: np.ndarray,
-    kappa_grid: np.ndarray,
-    out_file: str | Path,
-    title: str,
-) -> None:
-    values = np.asarray(values, dtype=float)
-    pi_grid = np.asarray(pi_grid, dtype=float)
-    kappa_grid = np.asarray(kappa_grid, dtype=float)
-
-    fig, ax = plt.subplots(figsize=(8, 5.5))
-
-    im = ax.imshow(
-        values,
-        origin="lower",
-        aspect="auto",
-        extent=[pi_grid[0], pi_grid[-1], kappa_grid[0], kappa_grid[-1]],
-    )
-
-    ax.set_xlim(pi_grid[0], pi_grid[-1])
-    ax.set_ylim(kappa_grid[0], kappa_grid[-1])
-
-    # Put explicit ticks across the whole plotting range
-    ax.set_xticks(np.linspace(pi_grid[0], pi_grid[-1], num=min(7, len(pi_grid))))
-    ax.set_yticks(np.linspace(kappa_grid[0], kappa_grid[-1], num=min(7, len(kappa_grid))))
-
-    ax.set_xlabel("Risky portfolio weight $\\pi$")
-    ax.set_ylabel("Consumption rate $\\kappa$")
-    ax.set_title(f"{title}\nValue at reference wealth $W=1$")
-    ax.grid(False)
-
-    cbar = fig.colorbar(im, ax=ax)
-    cbar.set_label("Value function at $W=1$")
-
-    fig.tight_layout()
-    Path(out_file).parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_file, dpi=150, bbox_inches="tight")
-    plt.close(fig)

@@ -9,58 +9,38 @@ from torch.optim import Adam
 from tqdm import trange
 
 from .config import MertonParams, PolicyParams, TrainConfig
-from .critic import MLPCRRACritic, ScalarCRRACritic, VanillaMLPCritic
+from .critic import VanillaMLPCritic
 from .eval import evaluate_critic_on_grid
 from .losses import compute_loss, make_batch
 from .sampling import sample_log_uniform
-from .merton import exact_value_coefficient
 
 
-CRITIC_TYPES = {
-    "scalar": ScalarCRRACritic,
-    "mlp": MLPCRRACritic,
-    "vanilla_mlp": VanillaMLPCritic,
-}
+def build_critic(params: MertonParams, device: str = "cpu") -> VanillaMLPCritic:
+    return VanillaMLPCritic(params).to(device)
 
-
-def build_critic(name: str, params: MertonParams, policy: PolicyParams, device: str = "cpu"):
-    exact_A = exact_value_coefficient(params, policy)
-    init_log_A = float(torch.log(torch.tensor(exact_A)).item())
-
-    if name == "scalar":
-        critic = ScalarCRRACritic(params, init_log_A=init_log_A)
-    elif name == "mlp":
-        critic = MLPCRRACritic(params, init_log_A=init_log_A)
-    elif name == "vanilla_mlp":
-        critic = VanillaMLPCritic(params)
-    else:
-        raise ValueError(f"Unknown critic type: {name}")
-
-    return critic.to(device)
 
 def train_fixed_policy_critic(
     params: MertonParams,
     policy: PolicyParams,
     train_cfg: TrainConfig,
-    critic_name: str = "scalar",
     loss_name: str = "beta_dtd",
 ) -> tuple[torch.nn.Module, dict[str, Any]]:
     torch.manual_seed(train_cfg.seed)
 
-    critic = build_critic(critic_name, params, policy, device=train_cfg.device)
+    critic = build_critic(params, device=train_cfg.device)
     optimizer = Adam(critic.parameters(), lr=train_cfg.learning_rate)
 
     history: dict[str, list[float]] = {
         "step": [],
         "loss": [],
         "td_mse": [],
-        "dtd_scaled_mse": [],
+        "dtd_mse": [],
         "mae": [],
         "rmse": [],
         "mape": [],
     }
 
-    iterator = trange(train_cfg.num_steps, desc=f"train-{critic_name}-{loss_name}", leave=False)
+    iterator = trange(train_cfg.num_steps, desc=f"train-{loss_name}", leave=False)
     for step in iterator:
         wealth = sample_log_uniform(
             batch_size=train_cfg.batch_size,
@@ -97,7 +77,7 @@ def train_fixed_policy_critic(
             history["step"].append(step)
             history["loss"].append(metrics["loss"])
             history["td_mse"].append(metrics["td_mse"])
-            history["dtd_scaled_mse"].append(metrics["dtd_scaled_mse"])
+            history["dtd_mse"].append(metrics["dtd_mse"])
             history["mae"].append(float(eval_metrics["mae"]))
             history["rmse"].append(float(eval_metrics["rmse"]))
             history["mape"].append(float(eval_metrics["mape"]))
@@ -117,7 +97,6 @@ def train_fixed_policy_critic(
         "params": asdict(params),
         "policy": asdict(policy),
         "train_cfg": asdict(train_cfg),
-        "critic_name": critic_name,
         "loss_name": loss_name,
     }
     result = {"history": history, "summary": summary, "meta": meta}

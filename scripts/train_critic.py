@@ -72,14 +72,20 @@ def main() -> None:
     plot_value_fit(result, out_dir / "value_fit.png")
 
     # numpy arrays inside result["summary"] are not JSON serializable; keep only scalars in summary.json
+    s = result["summary"]
     serializable = {
         "params": asdict(params),
         "policy": asdict(policy),
         "train_cfg": asdict(train_cfg),
         "loss": args.loss,
-        "mae": result["summary"]["mae"],
-        "rmse": result["summary"]["rmse"],
-        "mape": result["summary"]["mape"],
+        "mae": s["mae"],
+        "rmse": s["rmse"],
+        "mape": s["mape"],
+        "v_w_mae": s["v_w_mae"],
+        "v_w_norm": s["v_w_norm"],
+        "v_w_norm_true": s["v_w_norm_true"],
+        "hjb_rmse": s["hjb_rmse"],
+        "dtd_noise_floor": s["dtd_noise_floor"],
     }
     (out_dir / "summary.json").write_text(json.dumps(serializable, indent=2))
 

@@ -38,6 +38,10 @@ def train_fixed_policy_critic(
         "mae": [],
         "rmse": [],
         "mape": [],
+        "v_w_mae": [],
+        "v_w_norm": [],
+        "hjb_rmse": [],
+        "dtd_noise_floor": [],
     }
 
     iterator = trange(train_cfg.num_steps, desc=f"train-{loss_name}", leave=False)
@@ -72,6 +76,7 @@ def train_fixed_policy_critic(
                 low=train_cfg.wealth_min,
                 high=train_cfg.wealth_max,
                 num=train_cfg.eval_points,
+                dt=train_cfg.dt,
                 device=train_cfg.device,
             )
             history["step"].append(step)
@@ -81,6 +86,10 @@ def train_fixed_policy_critic(
             history["mae"].append(float(eval_metrics["mae"]))
             history["rmse"].append(float(eval_metrics["rmse"]))
             history["mape"].append(float(eval_metrics["mape"]))
+            history["v_w_mae"].append(float(eval_metrics["v_w_mae"]))
+            history["v_w_norm"].append(float(eval_metrics["v_w_norm"]))
+            history["hjb_rmse"].append(float(eval_metrics["hjb_rmse"]))
+            history["dtd_noise_floor"].append(float(eval_metrics["dtd_noise_floor"]))
             iterator.set_postfix(loss=f"{metrics['loss']:.3e}", mae=f"{eval_metrics['mae']:.3e}")
 
     summary = evaluate_critic_on_grid(
@@ -90,6 +99,7 @@ def train_fixed_policy_critic(
         low=train_cfg.wealth_min,
         high=train_cfg.wealth_max,
         num=train_cfg.eval_points,
+        dt=train_cfg.dt,
         device=train_cfg.device,
     )
 

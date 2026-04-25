@@ -44,14 +44,15 @@ def train_fixed_policy_critic(
         "dtd_noise_floor": [],
     }
 
+    wealth = sample_log_uniform(
+        batch_size=train_cfg.batch_size,
+        low=train_cfg.wealth_min,
+        high=train_cfg.wealth_max,
+        device=train_cfg.device,
+    )
+
     iterator = trange(train_cfg.num_steps, desc=f"train-{loss_name}", leave=False)
     for step in iterator:
-        wealth = sample_log_uniform(
-            batch_size=train_cfg.batch_size,
-            low=train_cfg.wealth_min,
-            high=train_cfg.wealth_max,
-            device=train_cfg.device,
-        )
         wealth, wealth_next, reward = make_batch(wealth, params, policy, train_cfg.dt)
 
         optimizer.zero_grad(set_to_none=True)
@@ -67,6 +68,8 @@ def train_fixed_policy_critic(
         )
         loss.backward()
         optimizer.step()
+
+        wealth = wealth_next.detach()
 
         if (step % train_cfg.log_every == 0) or (step == train_cfg.num_steps - 1):
             eval_metrics = evaluate_critic_on_grid(

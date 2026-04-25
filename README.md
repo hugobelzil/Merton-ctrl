@@ -24,8 +24,8 @@ It implements the **infinite-horizon CRRA Merton problem** with:
 It provides:
 1. **closed-form optimal policy** and **closed-form exact value** for any
    constant policy,
-2. **exact one-step simulation** of wealth under a fixed policy,
-3. critic training with
+2. **exact sample-path simulation** of wealth under a fixed policy,
+3. critic training on consecutive sample-path transitions with
    - standard **TD**,
    - **dTD**,
    - **beta-dTD**,

@@ -110,7 +110,7 @@ aversion).
 ### beta-dTD
 
 $$
-\mathcal{L}_{\beta\text{-dTD}}
+\mathcal{L}_{\beta\text{dTD}}
 = (1-\beta)\,\mathbb{E}[\delta_{TD}^2]
 + \beta\,\mathbb{E}[\delta_{dTD}^2].
 $$

@@ -35,6 +35,7 @@ def train_fixed_policy_critic(
         "loss": [],
         "td_mse": [],
         "dtd_mse": [],
+        "pinn_mse": [],
         "mae": [],
         "rmse": [],
         "mape": [],
@@ -86,6 +87,7 @@ def train_fixed_policy_critic(
             history["loss"].append(metrics["loss"])
             history["td_mse"].append(metrics["td_mse"])
             history["dtd_mse"].append(metrics["dtd_mse"])
+            history["pinn_mse"].append(metrics.get("pinn_mse", float("nan")))
             history["mae"].append(float(eval_metrics["mae"]))
             history["rmse"].append(float(eval_metrics["rmse"]))
             history["mape"].append(float(eval_metrics["mape"]))

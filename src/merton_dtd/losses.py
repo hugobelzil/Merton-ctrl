@@ -8,7 +8,7 @@ import torch
 from .config import MertonParams, PolicyParams
 from .merton import exact_step, reward_rate
 
-LossName = Literal["td", "dtd", "beta_dtd"]
+LossName = Literal["td", "dtd", "beta_dtd", "rl_pinn"]
 
 
 def make_batch(
@@ -123,6 +123,38 @@ def dtd_residual(
     return pred - target
 
 
+def rl_pinn_residual(
+    critic,
+    wealth: torch.Tensor,
+    wealth_next: torch.Tensor,
+    reward: torch.Tensor,
+    params: MertonParams,
+    dt: float,
+) -> torch.Tensor:
+    """
+    PINN-style Bellman residual from the RL_PINN note.
+
+    For each sampled transition (W_t, a_t, W_{t+dt}), the residual is
+
+        R_theta(W_t) = V_theta(W_t)
+                       - (1/rho) [ U(c_t)
+                                   + (DeltaW/dt)        * V_w(W_t)
+                                   + 0.5 * (DeltaW)^2/dt * V_ww(W_t) ]
+
+    Both V_theta and its derivatives at W_t carry gradients (no detach,
+    no target/prediction split). The next state only enters through the
+    increment DeltaW = W_{t+dt} - W_t, never as V_theta(W_{t+dt}).
+
+    The paper writes this with discount rate gamma; in this repo the
+    discount rate is named rho, and the instantaneous reward rate
+    rho_paper(s,a) corresponds to U(c) here (NOT multiplied by dt).
+    """
+    V, Vw, Vww = critic.value_and_derivatives(wealth)
+    delta = wealth_next - wealth
+    rhs = reward + (delta / dt) * Vw + 0.5 * (delta * delta / dt) * Vww
+    return V - rhs / params.rho
+
+
 def compute_loss(
     critic,
     wealth: torch.Tensor,
@@ -159,8 +191,20 @@ def compute_loss(
 
     td_mse = torch.mean(td.square())
     dtd_mse = torch.mean(dtd.square())
+    pinn_mse = torch.tensor(float("nan"))
 
-    if loss_name == "td":
+    if loss_name == "rl_pinn":
+        pinn = rl_pinn_residual(
+            critic=critic,
+            wealth=wealth,
+            wealth_next=wealth_next,
+            reward=reward,
+            params=params,
+            dt=dt,
+        )
+        pinn_mse = torch.mean(pinn.square())
+        loss = pinn_mse
+    elif loss_name == "td":
         loss = td_mse
     elif loss_name == "dtd":
         loss = dtd_mse
@@ -172,6 +216,7 @@ def compute_loss(
     metrics = {
         "td_mse": float(td_mse.detach().cpu()),
         "dtd_mse": float(dtd_mse.detach().cpu()),
+        "pinn_mse": float(pinn_mse.detach().cpu()),
         "loss": float(loss.detach().cpu()),
     }
     return loss, metrics

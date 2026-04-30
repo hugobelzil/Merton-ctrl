@@ -7,6 +7,7 @@ from pathlib import Path
 
 from merton_dtd.config import MertonParams, PolicyParams, TrainConfig
 from merton_dtd.plotting import plot_training_curves, plot_value_fit
+from merton_dtd.rl_pinn import RLPinnConfig, train_fixed_policy_critic_rl_pinn
 from merton_dtd.training import save_checkpoint, train_fixed_policy_critic
 
 
@@ -22,7 +23,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pi", type=float, default=0.75)
     parser.add_argument("--kappa", type=float, default=0.06125)
 
-    parser.add_argument("--loss", type=str, default="beta_dtd", choices=["td", "dtd", "beta_dtd"])
+    parser.add_argument(
+        "--loss",
+        type=str,
+        default="beta_dtd",
+        choices=["td", "dtd", "beta_dtd", "rl_pinn"],
+    )
     parser.add_argument("--beta", type=float, default=0.5)
 
     parser.add_argument("--seed", type=int, default=0)
@@ -36,6 +42,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--out-dir", type=str, default="results/train_critic")
+
+    # RL-PINN dataset/optimization knobs (only used when --loss rl_pinn).
+    # When --loss rl_pinn is selected, training uses a frozen trajectory
+    # dataset (m1 initial states x m2 trajectories x N steps) and runs
+    # --num-epochs SGD epochs over it instead of the streaming loop.
+    parser.add_argument("--m1", type=int, default=256, help="rl_pinn: number of initial states")
+    parser.add_argument("--m2", type=int, default=4, help="rl_pinn: trajectories per initial state")
+    parser.add_argument("--N", type=int, default=64, help="rl_pinn: trajectory length")
+    parser.add_argument("--num-epochs", type=int, default=40, help="rl_pinn: SGD epochs over dataset")
+    parser.add_argument("--minibatch-size", type=int, default=4096, help="rl_pinn: minibatch size")
+
     return parser.parse_args()
 
 
@@ -58,12 +75,30 @@ def main() -> None:
         log_every=args.log_every,
     )
 
-    critic, result = train_fixed_policy_critic(
-        params=params,
-        policy=policy,
-        train_cfg=train_cfg,
-        loss_name=args.loss,
-    )
+    if args.loss == "rl_pinn":
+        pinn_cfg = RLPinnConfig(
+            m1=args.m1,
+            m2=args.m2,
+            N=args.N,
+            minibatch_size=args.minibatch_size,
+            num_epochs=args.num_epochs,
+            learning_rate=args.lr,
+            seed=args.seed,
+            device=args.device,
+        )
+        critic, result = train_fixed_policy_critic_rl_pinn(
+            params=params,
+            policy=policy,
+            train_cfg=train_cfg,
+            pinn_cfg=pinn_cfg,
+        )
+    else:
+        critic, result = train_fixed_policy_critic(
+            params=params,
+            policy=policy,
+            train_cfg=train_cfg,
+            loss_name=args.loss,
+        )
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

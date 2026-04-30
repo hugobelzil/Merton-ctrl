@@ -1,0 +1,35 @@
+{
+  "params": {
+    "r": 0.02,
+    "mu": 0.08,
+    "sigma": 0.001,
+    "gamma": 2.0,
+    "rho": 0.08
+  },
+  "policy": {
+    "pi": 0.75,
+    "kappa": 0.06125
+  },
+  "train_cfg": {
+    "seed": 0,
+    "batch_size": 2048,
+    "num_steps": 12000,
+    "learning_rate": 0.002,
+    "dt": 1.0,
+    "wealth_min": 0.3,
+    "wealth_max": 3.0,
+    "eval_points": 200,
+    "beta": 0.5,
+    "device": "cpu",
+    "log_every": 100
+  },
+  "loss": "dtd",
+  "mae": 254.0678951806553,
+  "rmse": 301.4210624318997,
+  "mape": 1.0254390177069792,
+  "v_w_mae": 489.84904775613103,
+  "v_w_norm": 58.959815979003906,
+  "v_w_norm_true": 720.1586971885167,
+  "hjb_rmse": 25.29740328491936,
+  "dtd_noise_floor": 0.0008091933707393961
+}

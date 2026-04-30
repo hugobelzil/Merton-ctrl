@@ -8,15 +8,41 @@ import torch
 from torch.optim import Adam
 from tqdm import trange
 
-from .config import MertonParams, PolicyParams, TrainConfig
+from .config import HorizonConfig, MertonParams, PolicyParams, TrainConfig
 from .critic import VanillaMLPCritic
 from .eval import evaluate_critic_on_grid
 from .losses import compute_loss, make_batch
+from .merton import terminal_value_fn
 from .sampling import sample_log_uniform
 
 
-def build_critic(params: MertonParams, device: str = "cpu") -> VanillaMLPCritic:
-    return VanillaMLPCritic(params).to(device)
+def build_critic(
+    params: MertonParams,
+    device: str = "cpu",
+    horizon: HorizonConfig | None = None,
+) -> VanillaMLPCritic:
+    time_horizon = horizon.T if horizon is not None else None
+    return VanillaMLPCritic(params, time_horizon=time_horizon).to(device)
+
+
+def _evaluate_streaming_critic(
+    critic: VanillaMLPCritic,
+    params: MertonParams,
+    policy: PolicyParams,
+    train_cfg: TrainConfig,
+    horizon: HorizonConfig | None,
+) -> dict[str, Any]:
+    return evaluate_critic_on_grid(
+        critic=critic,
+        params=params,
+        policy=policy,
+        low=train_cfg.wealth_min,
+        high=train_cfg.wealth_max,
+        num=train_cfg.eval_points,
+        dt=train_cfg.dt if horizon is None else None,
+        device=train_cfg.device,
+        horizon=horizon,
+    )
 
 
 def train_fixed_policy_critic(
@@ -24,10 +50,12 @@ def train_fixed_policy_critic(
     policy: PolicyParams,
     train_cfg: TrainConfig,
     loss_name: str = "beta_dtd",
+    horizon: HorizonConfig | None = None,
+    terminal_weight: float = 1.0,
 ) -> tuple[torch.nn.Module, dict[str, Any]]:
     torch.manual_seed(train_cfg.seed)
 
-    critic = build_critic(params, device=train_cfg.device)
+    critic = build_critic(params, device=train_cfg.device, horizon=horizon)
     optimizer = Adam(critic.parameters(), lr=train_cfg.learning_rate)
 
     history: dict[str, list[float]] = {
@@ -51,10 +79,17 @@ def train_fixed_policy_critic(
         high=train_cfg.wealth_max,
         device=train_cfg.device,
     )
+    t = torch.zeros_like(wealth) if horizon is not None else None
+    g_fn = terminal_value_fn(params, horizon) if horizon is not None else None
 
     iterator = trange(train_cfg.num_steps, desc=f"train-{loss_name}", leave=False)
     for step in iterator:
         wealth, wealth_next, reward = make_batch(wealth, params, policy, train_cfg.dt)
+        t_next = None
+        terminal_mask = None
+        if horizon is not None:
+            t_next = torch.clamp(t + train_cfg.dt, max=horizon.T)
+            terminal_mask = t_next >= horizon.T
 
         optimizer.zero_grad(set_to_none=True)
         loss, metrics = compute_loss(
@@ -66,22 +101,46 @@ def train_fixed_policy_critic(
             dt=train_cfg.dt,
             loss_name=loss_name,
             beta=train_cfg.beta,
+            t=t,
+            t_next=t_next,
         )
+        if terminal_mask is not None and torch.any(terminal_mask):
+            assert g_fn is not None
+            v_terminal = critic.value(wealth_next[terminal_mask], t_next[terminal_mask])
+            terminal_mse = torch.mean(
+                (v_terminal - g_fn(wealth_next[terminal_mask])).square()
+            )
+            loss = loss + terminal_weight * terminal_mse
+            metrics["loss"] = float(loss.detach().cpu())
+            metrics["terminal_mse"] = float(terminal_mse.detach().cpu())
+        else:
+            metrics["terminal_mse"] = float("nan")
+
         loss.backward()
         optimizer.step()
 
         wealth = wealth_next.detach()
+        if horizon is not None:
+            assert t_next is not None
+            assert terminal_mask is not None
+            num_resets = int(terminal_mask.sum().item())
+            if num_resets > 0:
+                wealth = wealth.clone()
+                wealth[terminal_mask] = sample_log_uniform(
+                    batch_size=num_resets,
+                    low=train_cfg.wealth_min,
+                    high=train_cfg.wealth_max,
+                    device=train_cfg.device,
+                )
+            t = torch.where(terminal_mask, torch.zeros_like(t_next), t_next).detach()
 
         if (step % train_cfg.log_every == 0) or (step == train_cfg.num_steps - 1):
-            eval_metrics = evaluate_critic_on_grid(
+            eval_metrics = _evaluate_streaming_critic(
                 critic=critic,
                 params=params,
                 policy=policy,
-                low=train_cfg.wealth_min,
-                high=train_cfg.wealth_max,
-                num=train_cfg.eval_points,
-                dt=train_cfg.dt,
-                device=train_cfg.device,
+                train_cfg=train_cfg,
+                horizon=horizon,
             )
             history["step"].append(step)
             history["loss"].append(metrics["loss"])
@@ -91,21 +150,20 @@ def train_fixed_policy_critic(
             history["mae"].append(float(eval_metrics["mae"]))
             history["rmse"].append(float(eval_metrics["rmse"]))
             history["mape"].append(float(eval_metrics["mape"]))
-            history["v_w_mae"].append(float(eval_metrics["v_w_mae"]))
-            history["v_w_norm"].append(float(eval_metrics["v_w_norm"]))
-            history["hjb_rmse"].append(float(eval_metrics["hjb_rmse"]))
-            history["dtd_noise_floor"].append(float(eval_metrics["dtd_noise_floor"]))
+            history["v_w_mae"].append(float(eval_metrics.get("v_w_mae", float("nan"))))
+            history["v_w_norm"].append(float(eval_metrics.get("v_w_norm", float("nan"))))
+            history["hjb_rmse"].append(float(eval_metrics.get("hjb_rmse", float("nan"))))
+            history["dtd_noise_floor"].append(
+                float(eval_metrics.get("dtd_noise_floor", float("nan")))
+            )
             iterator.set_postfix(loss=f"{metrics['loss']:.3e}", mae=f"{eval_metrics['mae']:.3e}")
 
-    summary = evaluate_critic_on_grid(
+    summary = _evaluate_streaming_critic(
         critic=critic,
         params=params,
         policy=policy,
-        low=train_cfg.wealth_min,
-        high=train_cfg.wealth_max,
-        num=train_cfg.eval_points,
-        dt=train_cfg.dt,
-        device=train_cfg.device,
+        train_cfg=train_cfg,
+        horizon=horizon,
     )
 
     meta = {
@@ -114,6 +172,9 @@ def train_fixed_policy_critic(
         "train_cfg": asdict(train_cfg),
         "loss_name": loss_name,
     }
+    if horizon is not None:
+        meta["horizon"] = asdict(horizon)
+        meta["terminal_weight"] = terminal_weight
     result = {"history": history, "summary": summary, "meta": meta}
     return critic, result
 

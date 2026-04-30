@@ -6,7 +6,7 @@ from typing import Tuple
 import numpy as np
 import torch
 
-from .config import MertonParams, PolicyParams
+from .config import HorizonConfig, MertonParams, PolicyParams
 
 
 def utility(consumption: torch.Tensor | np.ndarray | float, gamma: float):
@@ -118,3 +118,91 @@ def exact_step(
 def reward_rate(wealth: torch.Tensor, params: MertonParams, policy: PolicyParams) -> torch.Tensor:
     consumption = policy.kappa * wealth
     return utility(consumption, params.gamma)
+
+
+def _finite_horizon_D(params: MertonParams, policy: PolicyParams) -> float:
+    """The constant D appearing in the A(t) ODE.
+
+    A(t) satisfies dA/dt = D * A - kappa^{1-gamma}, A(T) = terminal_coef,
+    where
+        D = rho - (1-gamma) * (r + pi (mu-r) - kappa - 0.5 gamma pi^2 sigma^2).
+    Admissibility requires D > 0.
+    """
+    g = params.gamma
+    drift_term = (
+        params.r
+        + policy.pi * (params.mu - params.r)
+        - policy.kappa
+        - 0.5 * g * (policy.pi ** 2) * (params.sigma ** 2)
+    )
+    D = params.rho - (1.0 - g) * drift_term
+    if D <= 0.0:
+        raise ValueError(
+            "Finite-horizon Merton policy is not admissible: D <= 0."
+        )
+    return float(D)
+
+
+def finite_horizon_A(
+    t: torch.Tensor | np.ndarray | float,
+    params: MertonParams,
+    policy: PolicyParams,
+    horizon: HorizonConfig,
+):
+    """Closed-form A(t) for the finite-horizon CRRA Merton problem.
+
+    Solving dA/dt = D A - kappa^{1-gamma} backward from A(T) = terminal_coef:
+        A(t) = terminal_coef * exp(-D (T-t))
+             + (kappa^{1-gamma} / D) * (1 - exp(-D (T-t))).
+
+    As T - t -> infinity, A(t) -> kappa^{1-gamma}/D, the infinite-horizon
+    coefficient, regardless of `terminal_coef`.
+    """
+    g = params.gamma
+    D = _finite_horizon_D(params, policy)
+    A_inf = (policy.kappa ** (1.0 - g)) / D
+    A_T = horizon.terminal_coef
+
+    if isinstance(t, np.ndarray):
+        tau = horizon.T - t
+        return A_T * np.exp(-D * tau) + A_inf * (1.0 - np.exp(-D * tau))
+    if isinstance(t, torch.Tensor):
+        tau = horizon.T - t
+        return A_T * torch.exp(-D * tau) + A_inf * (1.0 - torch.exp(-D * tau))
+    tau = horizon.T - float(t)
+    return A_T * math.exp(-D * tau) + A_inf * (1.0 - math.exp(-D * tau))
+
+
+def exact_value_finite(
+    t: torch.Tensor | np.ndarray | float,
+    wealth: torch.Tensor | np.ndarray | float,
+    params: MertonParams,
+    policy: PolicyParams,
+    horizon: HorizonConfig,
+):
+    """Closed-form V(t, W) for the finite-horizon CRRA Merton problem."""
+    A = finite_horizon_A(t, params, policy, horizon)
+    g = params.gamma
+    if isinstance(wealth, np.ndarray):
+        w = np.maximum(wealth, 1e-12)
+        return A * np.power(w, 1.0 - g) / (1.0 - g)
+    if isinstance(wealth, torch.Tensor):
+        w = torch.clamp(wealth, min=1e-12)
+        return A * torch.pow(w, 1.0 - g) / (1.0 - g)
+    w = max(float(wealth), 1e-12)
+    return A * (w ** (1.0 - g)) / (1.0 - g)
+
+
+def terminal_value_fn(
+    params: MertonParams,
+    horizon: HorizonConfig,
+):
+    """Returns the terminal value function g(W) = terminal_coef * W^{1-gamma}/(1-gamma)."""
+    g = params.gamma
+    A_T = horizon.terminal_coef
+
+    def g_fn(wealth: torch.Tensor) -> torch.Tensor:
+        w = torch.clamp(wealth, min=1e-12)
+        return A_T * torch.pow(w, 1.0 - g) / (1.0 - g)
+
+    return g_fn

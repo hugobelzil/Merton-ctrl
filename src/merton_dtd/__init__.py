@@ -6,16 +6,20 @@ This package is intentionally small. It focuses on:
 3. critic training with TD / dTD / beta-dTD for fixed-policy evaluation.
 """
 
-from .config import MertonParams, PolicyParams, TrainConfig
+from .config import HorizonConfig, MertonParams, PolicyParams, TrainConfig
 from .merton import (
     utility,
     optimal_policy_closed_form,
     exact_value_coefficient,
     exact_value,
+    exact_value_finite,
+    finite_horizon_A,
     is_policy_admissible,
+    terminal_value_fn,
 )
 
 __all__ = [
+    "HorizonConfig",
     "MertonParams",
     "PolicyParams",
     "TrainConfig",
@@ -23,5 +27,8 @@ __all__ = [
     "optimal_policy_closed_form",
     "exact_value_coefficient",
     "exact_value",
+    "exact_value_finite",
+    "finite_horizon_A",
     "is_policy_admissible",
+    "terminal_value_fn",
 ]

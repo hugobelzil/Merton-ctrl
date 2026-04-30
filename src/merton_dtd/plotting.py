@@ -32,6 +32,10 @@ def plot_value_fit(result: dict, out_file: str | Path) -> None:
     truth = np.asarray(summary["truth"], dtype=float)
     pred = np.asarray(summary["pred"], dtype=float)
 
+    if pred.ndim == 2:
+        _plot_finite_horizon_value_fit(summary, out_file)
+        return
+
     fig, ax = plt.subplots(figsize=(8, 5))
 
     ax.plot(wealth, truth, label="Exact closed-form value", linewidth=2.2)
@@ -50,6 +54,58 @@ def plot_value_fit(result: dict, out_file: str | Path) -> None:
     ax.grid(True, which="both", linestyle=":", alpha=0.5)
     ax.legend(frameon=True)
     fig.tight_layout()
+
+    Path(out_file).parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_file, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _plot_finite_horizon_value_fit(summary: dict, out_file: str | Path) -> None:
+    wealth = np.asarray(summary["wealth"], dtype=float)
+    time = np.asarray(summary["t_grid"], dtype=float)
+    truth = np.asarray(summary["truth"], dtype=float)
+    pred = np.asarray(summary["pred"], dtype=float)
+    abs_err = np.abs(pred - truth)
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5.2))
+
+    slice_idx = np.unique(
+        np.round(np.linspace(0, len(time) - 1, min(4, len(time)))).astype(int)
+    )
+    for idx in slice_idx:
+        label = f"t={time[idx]:.2f}"
+        (truth_line,) = axes[0].plot(
+            wealth, truth[idx], linewidth=2.0, label=f"Exact {label}"
+        )
+        axes[0].plot(
+            wealth,
+            pred[idx],
+            color=truth_line.get_color(),
+            linestyle="--",
+            linewidth=1.8,
+            label=f"Learned {label}",
+        )
+
+    axes[0].set_xscale("log")
+    axes[0].set_xlim(wealth.min(), wealth.max())
+    ticks = _nice_log_ticks(wealth.min(), wealth.max())
+    axes[0].set_xticks(ticks)
+    axes[0].set_xticklabels([f"{t:g}" for t in ticks])
+    axes[0].set_xlabel("Current wealth $W_t$")
+    axes[0].set_ylabel("Value $V(t, W_t)$")
+    axes[0].set_title("Exact vs learned value at selected times")
+    axes[0].grid(True, which="both", linestyle=":", alpha=0.5)
+    axes[0].legend(frameon=True, fontsize=8, ncol=2)
+
+    mesh = axes[1].pcolormesh(wealth, time, abs_err, shading="auto")
+    axes[1].set_xscale("log")
+    axes[1].set_xlabel("Current wealth $W_t$")
+    axes[1].set_ylabel("Time $t$")
+    axes[1].set_title("Absolute error over finite-horizon grid")
+    fig.colorbar(mesh, ax=axes[1], label="|learned - exact|")
+
+    fig.suptitle("Finite-horizon Merton critic fit", fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
 
     Path(out_file).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_file, dpi=150, bbox_inches="tight")
@@ -98,5 +154,3 @@ def plot_training_curves(result: dict, out_file: str | Path) -> None:
     Path(out_file).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_file, dpi=150, bbox_inches="tight")
     plt.close(fig)
-
-

@@ -5,7 +5,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from merton_dtd.config import MertonParams, PolicyParams, TrainConfig
+from merton_dtd.config import HorizonConfig, MertonParams, PolicyParams, TrainConfig
 from merton_dtd.plotting import plot_training_curves, plot_value_fit
 from merton_dtd.rl_pinn import RLPinnConfig, train_fixed_policy_critic_rl_pinn
 from merton_dtd.training import save_checkpoint, train_fixed_policy_critic
@@ -53,6 +53,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-epochs", type=int, default=40, help="rl_pinn: SGD epochs over dataset")
     parser.add_argument("--minibatch-size", type=int, default=4096, help="rl_pinn: minibatch size")
 
+    # Finite-horizon options. If --horizon is passed, the critic becomes V(t, W)
+    # and is evaluated against the finite-horizon closed form.
+    parser.add_argument("--horizon", type=float, default=None, help="terminal time T (finite horizon)")
+    parser.add_argument("--terminal-coef", type=float, default=0.0, help="finite horizon: bequest coefficient")
+    parser.add_argument("--no-terminal-loss", action="store_true", help="finite horizon: disable terminal MSE")
+    parser.add_argument("--terminal-weight", type=float, default=1.0, help="finite horizon: weight on terminal MSE")
+
     return parser.parse_args()
 
 
@@ -75,6 +82,12 @@ def main() -> None:
         log_every=args.log_every,
     )
 
+    horizon = (
+        HorizonConfig(T=args.horizon, terminal_coef=args.terminal_coef)
+        if args.horizon is not None
+        else None
+    )
+
     if args.loss == "rl_pinn":
         pinn_cfg = RLPinnConfig(
             m1=args.m1,
@@ -85,12 +98,15 @@ def main() -> None:
             learning_rate=args.lr,
             seed=args.seed,
             device=args.device,
+            use_terminal_loss=not args.no_terminal_loss,
+            terminal_weight=args.terminal_weight,
         )
         critic, result = train_fixed_policy_critic_rl_pinn(
             params=params,
             policy=policy,
             train_cfg=train_cfg,
             pinn_cfg=pinn_cfg,
+            horizon=horizon,
         )
     else:
         critic, result = train_fixed_policy_critic(
@@ -98,30 +114,33 @@ def main() -> None:
             policy=policy,
             train_cfg=train_cfg,
             loss_name=args.loss,
+            horizon=horizon,
+            terminal_weight=args.terminal_weight,
         )
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     save_checkpoint(critic, result, out_dir)
+
+    finite_horizon = args.horizon is not None
     plot_training_curves(result, out_dir / "training_curves.png")
     plot_value_fit(result, out_dir / "value_fit.png")
 
     # numpy arrays inside result["summary"] are not JSON serializable; keep only scalars in summary.json
     s = result["summary"]
+    scalar_keys = ["mae", "rmse", "mape", "v_w_mae", "v_w_norm", "v_w_norm_true",
+                   "hjb_rmse", "dtd_noise_floor"]
     serializable = {
         "params": asdict(params),
         "policy": asdict(policy),
         "train_cfg": asdict(train_cfg),
         "loss": args.loss,
-        "mae": s["mae"],
-        "rmse": s["rmse"],
-        "mape": s["mape"],
-        "v_w_mae": s["v_w_mae"],
-        "v_w_norm": s["v_w_norm"],
-        "v_w_norm_true": s["v_w_norm_true"],
-        "hjb_rmse": s["hjb_rmse"],
-        "dtd_noise_floor": s["dtd_noise_floor"],
     }
+    if finite_horizon:
+        serializable["horizon"] = {"T": args.horizon, "terminal_coef": args.terminal_coef}
+    for k in scalar_keys:
+        if k in s:
+            serializable[k] = float(s[k])
     (out_dir / "summary.json").write_text(json.dumps(serializable, indent=2))
 
     print("Training finished.")

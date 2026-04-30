@@ -39,6 +39,8 @@ def td_residual(
     reward: torch.Tensor,
     params: MertonParams,
     dt: float,
+    t: torch.Tensor | None = None,
+    t_next: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """
     Standard one-step TD residual:
@@ -48,12 +50,12 @@ def td_residual(
         reward_step = reward_rate * dt
         gamma_disc  = exp(-rho * dt)
     """
-    V = critic.value(wealth)
+    V = critic.value(wealth, t)
     reward_step = reward * dt
     gamma_disc = math.exp(-params.rho * dt)
 
     with torch.no_grad():
-        V_next = critic.value(wealth_next)
+        V_next = critic.value(wealth_next, t_next)
 
     return reward_step + gamma_disc * V_next - V
 
@@ -65,6 +67,8 @@ def dtd_prediction_and_target(
     reward: torch.Tensor,
     params: MertonParams,
     dt: float,
+    t: torch.Tensor | None = None,
+    t_next: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Practical dTD decomposition matching the paper's useful form.
@@ -83,16 +87,21 @@ def dtd_prediction_and_target(
     - V(W_{t+dt}) is treated as a target (detached / no-grad).
     - This is deliberately different from the old "raw residual" implementation.
     """
-    _, Vw, Vww = critic.value_and_derivatives(wealth)
+    if t is None:
+        _, Vw, Vww = critic.value_and_derivatives(wealth)
+        time_prediction = 0.0
+    else:
+        _, Vt, Vw, Vww = critic.value_and_derivatives(wealth, t)
+        time_prediction = dt * Vt
     delta_w = wealth_next - wealth
     reward_step = reward * dt
 
     # Prediction side: derivative/local-dynamics terms at the current state
-    prediction = delta_w * Vw + 0.5 * delta_w.square() * Vww
+    prediction = time_prediction + delta_w * Vw + 0.5 * delta_w.square() * Vww
 
     # Target side: value/reward terms
     with torch.no_grad():
-        V_next = critic.value(wealth_next)
+        V_next = critic.value(wealth_next, t_next)
 
     # Since gamma_disc = exp(-rho dt), we have -log(gamma_disc) = rho dt
     target = -reward_step + (params.rho * dt) * V_next
@@ -107,6 +116,8 @@ def dtd_residual(
     reward: torch.Tensor,
     params: MertonParams,
     dt: float,
+    t: torch.Tensor | None = None,
+    t_next: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """
     Practical dTD error:
@@ -119,6 +130,8 @@ def dtd_residual(
         reward=reward,
         params=params,
         dt=dt,
+        t=t,
+        t_next=t_next,
     )
     return pred - target
 
@@ -130,28 +143,28 @@ def rl_pinn_residual(
     reward: torch.Tensor,
     params: MertonParams,
     dt: float,
+    t: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """
     PINN-style Bellman residual from the RL_PINN note.
-
-    For each sampled transition (W_t, a_t, W_{t+dt}), the residual is
 
         R_theta(W_t) = V_theta(W_t)
                        - (1/rho) [ U(c_t)
                                    + (DeltaW/dt)        * V_w(W_t)
                                    + 0.5 * (DeltaW)^2/dt * V_ww(W_t) ]
 
-    Both V_theta and its derivatives at W_t carry gradients (no detach,
-    no target/prediction split). The next state only enters through the
-    increment DeltaW = W_{t+dt} - W_t, never as V_theta(W_{t+dt}).
+    For finite horizon (critic built with `time_horizon`), pass `t` and the
+    Ito expansion of V(t+dt, W_{t+dt}) contributes a V_t term:
 
-    The paper writes this with discount rate gamma; in this repo the
-    discount rate is named rho, and the instantaneous reward rate
-    rho_paper(s,a) corresponds to U(c) here (NOT multiplied by dt).
+        R = V(t,W) - (1/rho)[ U + V_t + (DeltaW/dt) V_w + 0.5 (DeltaW)^2/dt V_ww ].
     """
-    V, Vw, Vww = critic.value_and_derivatives(wealth)
     delta = wealth_next - wealth
-    rhs = reward + (delta / dt) * Vw + 0.5 * (delta * delta / dt) * Vww
+    if t is None:
+        V, Vw, Vww = critic.value_and_derivatives(wealth)
+        rhs = reward + (delta / dt) * Vw + 0.5 * (delta * delta / dt) * Vww
+    else:
+        V, Vt, Vw, Vww = critic.value_and_derivatives(wealth, t)
+        rhs = reward + Vt + (delta / dt) * Vw + 0.5 * (delta * delta / dt) * Vww
     return V - rhs / params.rho
 
 
@@ -164,6 +177,8 @@ def compute_loss(
     dt: float,
     loss_name: LossName,
     beta: float = 0.5,
+    t: torch.Tensor | None = None,
+    t_next: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """
     Losses:
@@ -178,6 +193,8 @@ def compute_loss(
         reward=reward,
         params=params,
         dt=dt,
+        t=t,
+        t_next=t_next,
     )
 
     dtd = dtd_residual(
@@ -187,6 +204,8 @@ def compute_loss(
         reward=reward,
         params=params,
         dt=dt,
+        t=t,
+        t_next=t_next,
     )
 
     td_mse = torch.mean(td.square())
@@ -201,6 +220,7 @@ def compute_loss(
             reward=reward,
             params=params,
             dt=dt,
+            t=t,
         )
         pinn_mse = torch.mean(pinn.square())
         loss = pinn_mse

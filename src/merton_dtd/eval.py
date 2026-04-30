@@ -5,8 +5,8 @@ from dataclasses import asdict
 import numpy as np
 import torch
 
-from .config import MertonParams, PolicyParams
-from .merton import exact_value, exact_value_coefficient, utility
+from .config import HorizonConfig, MertonParams, PolicyParams
+from .merton import exact_value, exact_value_coefficient, exact_value_finite, utility
 
 
 def wealth_grid(low: float, high: float, num: int) -> np.ndarray:
@@ -22,6 +22,8 @@ def evaluate_critic_on_grid(
     num: int,
     dt: float | None = None,
     device: str = "cpu",
+    horizon: HorizonConfig | None = None,
+    num_t: int = 21,
 ) -> dict[str, np.ndarray | float | dict]:
     """
     Evaluate critic against the closed-form value, and additionally report
@@ -35,6 +37,19 @@ def evaluate_critic_on_grid(
       - dtd_noise_floor : analytic per-sample noise variance V_w^2 * pi^2 sigma^2 w^2 * dt,
                           averaged over the grid (only computed if dt is given)
     """
+    if horizon is not None:
+        return _evaluate_finite_horizon_critic_on_grid(
+            critic=critic,
+            params=params,
+            policy=policy,
+            horizon=horizon,
+            low=low,
+            high=high,
+            num_w=num,
+            num_t=num_t,
+            device=device,
+        )
+
     grid = wealth_grid(low, high, num)
     w = torch.tensor(grid, dtype=torch.float32, device=device, requires_grad=True)
 
@@ -90,3 +105,47 @@ def evaluate_critic_on_grid(
         out["dtd_noise_floor"] = float(noise_floor.mean())
 
     return out
+
+
+def _evaluate_finite_horizon_critic_on_grid(
+    critic,
+    params: MertonParams,
+    policy: PolicyParams,
+    horizon: HorizonConfig,
+    low: float,
+    high: float,
+    num_w: int,
+    num_t: int = 21,
+    device: str = "cpu",
+) -> dict[str, np.ndarray | float | dict]:
+    """Evaluate a TimeAwareMLPCritic against the closed-form V(t, W).
+
+    Reports MAE, RMSE, MAPE on a (t, W) tensor product grid. Also returns
+    arrays of pred and truth shaped (num_t, num_w) for plotting.
+    """
+    w_grid = wealth_grid(low, high, num_w)
+    t_grid = np.linspace(0.0, horizon.T, num_t)
+    TT, WW = np.meshgrid(t_grid, w_grid, indexing="ij")
+
+    w_flat = torch.tensor(WW.reshape(-1), dtype=torch.float32, device=device)
+    t_flat = torch.tensor(TT.reshape(-1), dtype=torch.float32, device=device)
+    with torch.no_grad():
+        V_flat = critic.value(w_flat, t_flat).cpu().numpy()
+    pred = V_flat.reshape(TT.shape)
+
+    truth = exact_value_finite(TT, WW, params, policy, horizon)
+    abs_err = np.abs(pred - truth)
+    rel_err = abs_err / np.maximum(np.abs(truth), 1e-12)
+
+    return {
+        "t_grid": t_grid,
+        "wealth": w_grid,
+        "pred": pred,
+        "truth": truth,
+        "mae": float(abs_err.mean()),
+        "rmse": float(np.sqrt(np.mean((pred - truth) ** 2))),
+        "mape": float(rel_err.mean()),
+        "params": asdict(params),
+        "policy": asdict(policy),
+        "horizon": asdict(horizon),
+    }

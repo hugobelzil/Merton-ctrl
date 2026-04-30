@@ -50,6 +50,27 @@ class PolicyParams:
 
 
 @dataclass(frozen=True)
+class HorizonConfig:
+    """Finite-horizon configuration.
+
+    The CRRA value function in finite horizon takes the form
+        V(t, W) = A(t) * W^{1-gamma} / (1-gamma),
+    with A(t) determined by an ODE backward from the terminal condition
+        V(T, W) = terminal_coef * W^{1-gamma} / (1-gamma).
+    `terminal_coef = 0` is the standard "no bequest" case; setting it to the
+    infinite-horizon coefficient kappa^{1-gamma}/D collapses A(t) to a constant
+    and recovers the stationary problem.
+    """
+
+    T: float
+    terminal_coef: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.T <= 0.0:
+            raise ValueError("Horizon T must be strictly positive")
+
+
+@dataclass(frozen=True)
 class TrainConfig:
     seed: int = 0
     batch_size: int = 512

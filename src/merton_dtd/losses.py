@@ -41,6 +41,7 @@ def td_residual(
     dt: float,
     t: torch.Tensor | None = None,
     t_next: torch.Tensor | None = None,
+    terminal_value_next: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """
     Standard one-step TD residual:
@@ -55,7 +56,10 @@ def td_residual(
     gamma_disc = math.exp(-params.rho * dt)
 
     with torch.no_grad():
-        V_next = critic.value(wealth_next, t_next)
+        if terminal_value_next is None:
+            V_next = critic.value(wealth_next, t_next)
+        else:
+            V_next = terminal_value_next
 
     return reward_step + gamma_disc * V_next - V
 
@@ -69,6 +73,7 @@ def dtd_prediction_and_target(
     dt: float,
     t: torch.Tensor | None = None,
     t_next: torch.Tensor | None = None,
+    terminal_value_next: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Practical dTD decomposition matching the paper's useful form.
@@ -101,7 +106,10 @@ def dtd_prediction_and_target(
 
     # Target side: value/reward terms
     with torch.no_grad():
-        V_next = critic.value(wealth_next, t_next)
+        if terminal_value_next is None:
+            V_next = critic.value(wealth_next, t_next)
+        else:
+            V_next = terminal_value_next
 
     # Since gamma_disc = exp(-rho dt), we have -log(gamma_disc) = rho dt
     target = -reward_step + (params.rho * dt) * V_next
@@ -118,6 +126,7 @@ def dtd_residual(
     dt: float,
     t: torch.Tensor | None = None,
     t_next: torch.Tensor | None = None,
+    terminal_value_next: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """
     Practical dTD error:
@@ -132,6 +141,7 @@ def dtd_residual(
         dt=dt,
         t=t,
         t_next=t_next,
+        terminal_value_next=terminal_value_next,
     )
     return pred - target
 
@@ -179,6 +189,7 @@ def compute_loss(
     beta: float = 0.5,
     t: torch.Tensor | None = None,
     t_next: torch.Tensor | None = None,
+    terminal_value_next: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """
     Losses:
@@ -195,6 +206,7 @@ def compute_loss(
         dt=dt,
         t=t,
         t_next=t_next,
+        terminal_value_next=terminal_value_next,
     )
 
     dtd = dtd_residual(
@@ -206,6 +218,7 @@ def compute_loss(
         dt=dt,
         t=t,
         t_next=t_next,
+        terminal_value_next=terminal_value_next,
     )
 
     td_mse = torch.mean(td.square())

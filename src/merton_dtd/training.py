@@ -64,6 +64,7 @@ def train_fixed_policy_critic(
         "td_mse": [],
         "dtd_mse": [],
         "pinn_mse": [],
+        "terminal_mse": [],
         "mae": [],
         "rmse": [],
         "mape": [],
@@ -87,9 +88,17 @@ def train_fixed_policy_critic(
         wealth, wealth_next, reward = make_batch(wealth, params, policy, train_cfg.dt)
         t_next = None
         terminal_mask = None
+        terminal_value_next = None
         if horizon is not None:
             t_next = torch.clamp(t + train_cfg.dt, max=horizon.T)
             terminal_mask = t_next >= horizon.T
+            if torch.any(terminal_mask):
+                assert g_fn is not None
+                terminal_value_next = critic.value(wealth_next, t_next).detach()
+                terminal_value_next = terminal_value_next.clone()
+                terminal_value_next[terminal_mask] = g_fn(
+                    wealth_next[terminal_mask]
+                ).detach()
 
         optimizer.zero_grad(set_to_none=True)
         loss, metrics = compute_loss(
@@ -103,12 +112,20 @@ def train_fixed_policy_critic(
             beta=train_cfg.beta,
             t=t,
             t_next=t_next,
+            terminal_value_next=terminal_value_next,
         )
-        if terminal_mask is not None and torch.any(terminal_mask):
+        if horizon is not None:
             assert g_fn is not None
-            v_terminal = critic.value(wealth_next[terminal_mask], t_next[terminal_mask])
+            terminal_wealth = sample_log_uniform(
+                batch_size=train_cfg.batch_size,
+                low=train_cfg.wealth_min,
+                high=train_cfg.wealth_max,
+                device=train_cfg.device,
+            )
+            terminal_time = torch.full_like(terminal_wealth, horizon.T)
+            v_terminal = critic.value(terminal_wealth, terminal_time)
             terminal_mse = torch.mean(
-                (v_terminal - g_fn(wealth_next[terminal_mask])).square()
+                (v_terminal - g_fn(terminal_wealth)).square()
             )
             loss = loss + terminal_weight * terminal_mse
             metrics["loss"] = float(loss.detach().cpu())
@@ -147,6 +164,7 @@ def train_fixed_policy_critic(
             history["td_mse"].append(metrics["td_mse"])
             history["dtd_mse"].append(metrics["dtd_mse"])
             history["pinn_mse"].append(metrics.get("pinn_mse", float("nan")))
+            history["terminal_mse"].append(metrics["terminal_mse"])
             history["mae"].append(float(eval_metrics["mae"]))
             history["rmse"].append(float(eval_metrics["rmse"]))
             history["mape"].append(float(eval_metrics["mape"]))

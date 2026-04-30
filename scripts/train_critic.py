@@ -115,7 +115,7 @@ def main() -> None:
             train_cfg=train_cfg,
             loss_name=args.loss,
             horizon=horizon,
-            terminal_weight=args.terminal_weight,
+            terminal_weight=0.0 if args.no_terminal_loss else args.terminal_weight,
         )
 
     out_dir = Path(args.out_dir)

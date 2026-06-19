@@ -1,578 +1,366 @@
-\documentclass[11pt]{article}
+\documentclass{article}
+
+\usepackage[preprint]{neurips_2026}
 
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
-\usepackage{lmodern}
-\usepackage[margin=1in]{geometry}
-\usepackage{amsmath,amssymb,amsthm,bm}
-\usepackage{booktabs}
-\usepackage{array}
-\usepackage{graphicx}
 \usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{microtype}
 \usepackage{xcolor}
+\usepackage[english]{babel}
+\usepackage{subcaption}
+\usepackage{graphicx}
+\usepackage{multirow}
+\usepackage{siunitx}
+\usepackage{float}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
 
-\DeclareUnicodeCharacter{0306}{\u{}}
+\newcommand{\TODO}[1]{\textcolor{red}{TODO: #1}}
 
-\hypersetup{
-  colorlinks=true,
-  linkcolor=blue!60!black,
-  citecolor=blue!60!black,
-  urlcolor=blue!60!black
+\title{Continuous Time Reinforcement Learning in Finance}
+
+\author{%
+  Hugo Belzil \\
+  \And
+  Leandro Bentele \\
+  \And
+  Fynn Jonathan Starke \\
+  \And
+  Alvaro Zamanillo \\
 }
 
-\newtheorem{assumption}{Assumption}
-\newtheorem{definition}{Definition}
-\newtheorem{proposition}{Proposition}
-\newtheorem{lemma}{Lemma}
-\newtheorem{remark}{Remark}
-
-\newcommand{\E}{\mathbb{E}}
-\newcommand{\R}{\mathbb{R}}
-\newcommand{\dd}{\,\mathrm{d}}
-\newcommand{\dt}{\Delta t}
-\newcommand{\St}{S_t}
-\newcommand{\At}{A_t}
-\newcommand{\citet}[1]{\cite{#1}}
-\newcommand{\citep}[1]{\cite{#1}}
-
-\title{A Temporal Difference Method\\for Stochastic Continuous Dynamics}
-\author{Haruki Settai \and Naoya Takeishi \and Takehisa Yairi\\
-The University of Tokyo\\
-\texttt{\{sharuki,ntake,yairi\}@g.ecc.u-tokyo.ac.jp}}
-\date{}
-
 \begin{document}
+
 \maketitle
 
 \begin{abstract}
-For continuous systems modeled by dynamical equations such as ODEs and SDEs, Bellman's principle of optimality takes the form of the Hamilton-Jacobi-Bellman (HJB) equation, which provides the theoretical target of reinforcement learning (RL). Although recent advances in RL successfully leverage this formulation, the existing methods typically assume the underlying dynamics are known a priori because they need explicit access to the drift and diffusion coefficients to update the value function following the HJB equation. We address this inherent limitation of HJB-based RL; we propose a model-free approach still targeting the HJB equation and the corresponding temporal difference method. We prove exponential stability of the induced continuous-time dynamics, and we empirically demonstrate the resulting advantages over transition-kernel-based formulations. The proposed formulation paves the way toward bridging stochastic control and model-free reinforcement learning.
+This report evaluates the recently proposed differential Temporal Difference (dTD) framework - a model-free reinforcement learning approach targeting the Hamilton-Jacobi-Bellman (HJB) expectation equation in continuous time - and explores its viability in financial stochastic optimal control. We first replicate the benchmark results of \cite{settai2025} on continuous control environments, confirming that a hybridized $\beta$-dTD scheme can achieve faster initial policy improvement over standard TD by implicitly leveraging structural continuity. We then extend the benchmark evaluation to a classic financial setting: the continuous-time Merton consumption-investment problem. Our numerical experiments reveal a critical vulnerability of the pure dTD algorithm in diffusion-heavy regimes. As the observation interval $\Delta t \to 0$, the dTD gradient estimation becomes entirely noise-dominated by the Brownian increments, causing the value function to collapse into a spurious constant attractor ($\nabla V \to 0$). We investigate two variance-reduction strategies to mitigate this instability: a hybrid $\beta$-dTD regularizer and a multi-sample (K-sample) drift estimator. While the K-sample approach successfully anchors convergence in the infinite-horizon setting, it incurs high computational overhead. Finally, we demonstrate that a finite-horizon formulation naturally provides better problem regularization, enabling $\beta$-dTD to consistently outperform standard TD baselines under low-process noise. Our findings underscore both the theoretical promise of HJB-based reinforcement learning and the severe practical challenges posed by financial market diffusion.
 \end{abstract}
 
+
 \section{Introduction}
-Reinforcement learning (RL) has been successfully applied in various domains, ranging from discrete systems like board games \cite{silver2018} to systems that are continuous in both state and time such as robotic control \cite{kober2013}. RL research has been advancing through a variety of approaches, and much of the work has focused on improving methods by refining objective functions \cite{schulman2015,schulman2017}, balancing exploration and exploitation \cite{haarnoja2018}, and developing more effective architectures \cite{hafner2019}. These efforts have significantly advanced the field, leading to the development of various successful algorithms.
+\label{sec:introduction}
 
-In contrast to the studies primarily targeting algorithmic components or optimization techniques, we focus on the continuity of time and explore what we call continuous RL, where the dynamics of systems are described by ordinary differential equations (ODEs) or stochastic differential equations (SDEs), which is a relatively underexplored aspect of RL. Although many RL methods have been applied, sometimes heuristically, to both discrete and continuous systems, the continuity of the system has not necessarily been fully exploited, even when it is known in advance. Laying a foundation for utilizing prior knowledge of continuity is important toward more effective learning and decision-making methods, particularly for practical applications such as robot control and autonomous driving, which typically fall into the target of continuous RL.
+In recent years, deep reinforcement learning has emerged as a powerful paradigm for solving complex sequential decision-making problems, demonstrating remarkable success in domains ranging from discrete board games to continuous robotic manipulation. However, a persistent challenge remains in effectively bridging the gap between discrete-time algorithmic frameworks and systems that are naturally continuous in both state and time. Physical systems governed by classical mechanics, automated driving, and high-frequency financial markets are fundamentally continuous-time processes whose dynamics are best characterized by Stochastic Differential Equations.
 
-A way to incorporate prior knowledge of the system's continuity into the learning process is to use the Hamilton-Jacobi-Bellman (HJB) equation. In the Bellman equation, continuity is encoded in the transition kernel. However, in model-free RL, where transitions are approximated using samples, this continuity information is lost because the transition kernel is not explicitly modeled. On the other hand, the HJB equation retains the continuity information in the argument of the expectation rather than in the transition kernel. This property allows the HJB equation to keep taking continuity into account even under sample-based approximations. However, because the HJB equation depends on the coefficient functions of the system's dynamics, prior work has largely been limited to model-based approaches \cite{munos1997stochastic,yildiz2021}.
+The paper by \cite{settai2025} highlights a flaw in established methods and tries to suggest a solution to that. When standard deep RL algorithms (such as Proximal Policy Optimization or Deep Deterministic Policy Gradients) are applied to these continuous-time environments, they typically begin by discretizing the problem into a fixed observation interval $\Delta t$. The environment is modeled as a standard Markov Decision Process (MDP), where the agent's objective is to learn a value function mapping states to expected future rewards. Crucially, the expectation governing this value function depends implicitly on the underlying environment transition kernel $P(s_{t+\Delta t} | s_t, a_t)$. The drawback to this conventional model-free approach is that approximating this expectation purely through sampled transitions discards the structural prior knowledge of temporal and spatial continuity. Because the value function updates only see discrete state pairs $(s_t, s_{t+\Delta t})$, the agent is essentially blinded to the smooth, continuous underlying trajectory connecting them. Thus, the information about the continuous nature of the system is not utilized properly.
 
-In this paper, we introduce a temporal difference (TD) method based on the HJB equation, namely differential TD (dTD), achieved through sample-based approximation of the expectation term in the HJB equation. dTD enables policy evaluation without requiring knowledge or estimation of the system dynamics, while incorporating the continuity of the dynamics into the learning process. It is compatible with on-policy methods such as A2C \cite{mnih2016} and PPO \cite{schulman2017}, and we demonstrate its effectiveness on Mujoco \cite{todorov2012} tasks including Hopper, HalfCheetah, Ant, and Humanoid. The code for the proposed method is available at \url{https://github.com/4thhia/differential_TD}.
+To explicitly enforce and leverage the system's underlying continuity during the learning process, one can appeal to stochastic optimal control theory, where Bellman's Principle of Optimality takes the form of the Hamilton-Jacobi-Bellman (HJB) equation. Unlike the standard Bellman equation, which encapsulates continuous dynamics entirely within its transition kernel, the HJB equation retains continuity information explicitly within the argument of its expectation via infinitesimal drift and diffusion coefficients. Historically, utilizing the HJB formulation has restricted algorithms to model-based frameworks, requiring an agent to have exact, \textit{a priori} knowledge of the system's drift $\mu$ and diffusion $\sigma$ to compute value function updates. Such an assumption is deeply restrictive in fields like quantitative finance and economics, where the true underlying structural dynamics are heavily latent, noisy, and non-stationary.
 
-\section{Related Work}
-\paragraph{Deterministic dynamics.}
-The study of continuous RL for ODE systems can be traced back to studies such as \citet{baird1994,munos1997,doya2000,munos2006}. \citet{baird1994} discovered that the Q-function collapses in continuous RL, which was rigorously proven and extended to deep RL in \citet{tallec2019}. In \citet{munos1997}, model-free approaches for ODE systems were first studied. \citet{doya2000} was the first to introduce TD for ODE systems and extended it to TD($\lambda$) and actor-critic. \citet{munos2006} investigated the estimation of policy gradients for ODE systems and proposed a pathwise derivative approach. More recently, \citet{vamvoudakis2017} developed a model-free RL framework for deterministic linear systems. \citet{kim2021} proposed a model-free Q-learning approach in which the control is derived from the HJB equation, while the learning target is based on the conventional Bellman equation. \citet{yildiz2021} introduced a model-based method that leverages the Neural ODE framework to enable continuous-time optimization using learned system dynamics.
+To overcome this fundamental paradigm constraint, \citet{settai2025} proposed the Differential Temporal Difference (dTD) framework. By exploiting the mathematical limits of sample-based finite differences, dTD replaces the explicit functional forms of drift and diffusion with sample estimators from observed increments $\Delta s_t$, establishing a model-free approach that directly targets the fixed-policy HJB expectation equation. While this method demonstrates strong empirical data efficiency in physical robotic control baselines, its viability in pure-diffusion regimes remains an open question. Physical systems are highly drift-governed, dictated by fundamental laws of motion; in stark contrast, financial assets are noise-dominated, exhibiting extreme diffusion relative to their underlying drift.
 
-\paragraph{Stochastic dynamics.}
-One of the earliest works on RL in SDE systems is \citet{munos1997stochastic}, which takes a model-based approach. However, research in this direction remained largely unexplored until recently. A growing body of work has emerged that aims to establish theoretical foundations for RL in stochastic dynamics. \citet{wang2020} introduced an entropy-regularized relaxed control formulation and provided a comprehensive analysis in the LQR setting. \citet{tang2022} further demonstrated the well-posedness of the HJB equation within this relaxed control framework. \citet{jia2022b} showed that Bellman optimality is equivalent to maintaining the martingale property of a suitably defined stochastic process, and proposed a corresponding algorithm. Building on this approach, \citet{jia2022a,jia2023} proposed actor-critic and Q-learning algorithms for finite-horizon SDE systems, respectively. \citet{zhao2020} extended key theoretical tools such as the state visitation distribution and the performance difference lemma to the continuous-time setting and applied them to TRPO and PPO. In contrast to these approaches, our work proposes a simple model-free TD method that is applicable to general nonlinear stochastic dynamics without requiring knowledge of the SDE coefficients.
+The contribution of this report is two-fold. First, we replicate and evaluate the benchmark performance of the dTD framework across standard continuous control tasks (Hopper, HalfCheetah, Ant, and Humanoid) using a robust $\beta$-dTD hybrid scheme. Second, we extend this framework to a purely financial asset-allocation domain by benchmarking $\beta$-dTD against the classic continuous-time Merton consumption-investment problem. Through this financial extension, we expose a critical vulnerability of the dTD loss function: as the observation timestep approaches zero ($\Delta t \to 0$), the first-order gradient estimator becomes entirely dominated by Brownian noise. This noise dominance drives the network toward a spurious constant attractor ($\nabla V \to 0$), completely destabilizing the critic. To remedy this failure mode, we investigate the regularizing properties of multi-sample ($K$-sample) variance reduction and finite-horizon temporal dependencies, illuminating both the theoretical elegance and the practical engineering hurdles of HJB-based reinforcement learning in financial engineering.
 
-\section{Background}
+\section{Theoretical Framework}
+\label{sec:theoretical_framework}
+
 \subsection{Problem Setting}
-We consider a continuous-time RL setting where the state space is $\mathcal{S}\subset\R^n$ and the action space is $\mathcal{A}$. We model the state dynamics by the following controlled SDE:
+We consider a continuous-time reinforcement learning setup where the system state space is defined as $\mathcal{S} \subset \mathbb{R}^n$ and the action space as $\mathcal{A}$. The infinitesimal evolution of the state trajectory is governed by a controlled Stochastic Differential Equation of the form:
 \begin{equation}
-\dd S_t=\mu(S_t,A_t)\dd t+\sigma(S_t,A_t)\dd B_t,
-\label{eq:sde}
+    dS_t = \mu(S_t, A_t) dt + \sigma(S_t, A_t) dB_t
 \end{equation}
-where $\mu:\mathcal{S}\times\mathcal{A}\to\R^n$, $\sigma:\mathcal{S}\times\mathcal{A}\to\R^{n\times m}$, and $(B_t)_{t\ge0}$ is the $m$-dimensional Brownian motion. The state evolution is influenced by both the inherent noise in the system and the randomness induced by the stochastic policy $\pi:\mathcal{S}\to\mathcal{P}(\mathcal{A})$. Thus, expectations related to this SDE are expressed as $\E_{p^\pi}[\cdot]$, where $p^\pi$ denotes the transition kernel induced by \eqref{eq:sde}. We primarily focus on the model-free setting, where the agent has no prior knowledge of $\mu$ and $\sigma$.
+where $\mu: \mathcal{S} \times \mathcal{A} \to \mathbb{R}^n$ denotes the drift coefficient, $\sigma: \mathcal{S} \times \mathcal{A} \to \mathbb{R}^{n \times m}$ represents the diffusion matrix, and $(B_t)_{t \ge 0}$ is an $m$-dimensional standard Brownian motion. Actions are sampled according to a stationary stochastic policy $A_t \sim \pi(\cdot | S_t)$. The model-free assumption dictates that the agent has no \textit{a priori} knowledge of the analytical forms of $\mu$ or $\sigma$, observing the system states exclusively at discrete temporal instants $t, t+\Delta t, t+2\Delta t, \dots$.
 
-\subsection{Continuous RL}
-The dynamics governed by \eqref{eq:sde} exhibit the Markov property, and thus continuous RL falls within the general framework of an MDP. For example, the Bellman optimality equation can be written as
+\subsection{Classical Temporal Difference (TD) Learning Baseline}
+Before establishing the continuous-time framework, we review the classical discrete-time Temporal Difference (TD) learning paradigm, which serves as our fundamental baseline. In a standard Markov Decision Process (MDP) setting, time is treated as a sequence of discrete steps, and an agent's goal is to evaluate a policy $\pi$ by learning its expected discounted cumulative return, defined as the value function $V^\pi(s)$:
 \begin{equation}
-V^*(s_t)=\max_{\pi}\E_{p^\pi}\left[\int_t^{t'} e^{-\gamma(\tau-t)}\rho(S_\tau,A_\tau)\dd\tau
-+e^{-\gamma(t'-t)}V^*(S_{t'})\mid S_t=s_t\right],
+    V^{\pi}(s) = \mathbb{E}_{\pi} \left[ \sum_{k=0}^{\infty} \gamma_{\text{discrete}}^{k} r(s_k, a_k) \;\middle|\; s_0 = s \right]
 \end{equation}
-where $\rho:\mathcal{S}\times\mathcal{A}\to\R$ is the reward rate function and $\gamma\in(0,\infty)$ is the discount rate. The optimal value function is
+where $\gamma_{\text{discrete}} \in (0, 1)$ represents the discrete discount factor and $r(s_k, a_k)$ is the immediate reward observed after executing action $a_k \sim \pi(\cdot|s_k)$ from state $s_k$. This formulation satisfies the classic discrete-time \textbf{Bellman expectation equation}:
 \begin{equation}
-V^*(s):=\max_\pi\E_{p^\pi}\left[\int_t^\infty e^{-\gamma(\tau-t)}\rho(S_\tau,A_\tau)\dd\tau\mid S_t=s\right].
+    V^{\pi}(s) = \mathbb{E}_{a \sim \pi(\cdot|s), \, s' \sim P(\cdot|s,a)} \left[ r(s, a) + \gamma_{\text{discrete}} V^{\pi}(s') \right]
 \end{equation}
-When learning based on discrete observations of a continuous system, one can discretize the problem as
-\begin{equation}
-V^*(s_t)=\max_\pi\E_{p^\pi}\left[\rho(s_t,A_t)\dt+e^{-\gamma\dt}V^*(S_{t+\dt})\right].
-\label{eq:bellman-opt}
-\end{equation}
-Standard RL methods can be applied to this discretization, although the use of Q-functions in continuous time requires care \cite{tallec2019}. In the model-free setting, however, the dynamics enter only through the transition kernel, and approximating the expectation by samples does not explicitly exploit the underlying continuity of the dynamics.
+where $P(\cdot|s,a)$ denotes the transition kernel of the environment conditioned on the current state-action pair, and the action is sampled according to the stationary policy $\pi(\cdot|s)$.
 
-\subsection{Natural Target of Continuous RL}
-We focus on TD learning. Combining Bellman optimality or expectation equations with $V$ or $Q$ functions gives four candidate targets. The $V$-Bellman optimality equation is immediately excluded as it is not compatible with the model-free framework. The $Q$-Bellman optimality equation is challenging in continuous RL due to the maximization operator. Since Q-functions often degenerate in continuous RL \cite{tallec2019}, we focus on policy evaluation via the $V$-Bellman expectation equation,
+In an online, model-free setting, the true transition dynamics $P^\pi$ are unknown. Standard TD learning (specifically TD(0)) approximates this expectation by utilizing sampled transitions $(s_t, a_t, r_t, s_{t+1})$ directly from execution paths. Let $V_\theta(s)$ represent the estimated value function parameterized by a neural network with weights $\theta$. Upon observing a transition, the algorithm evaluates the prediction error via the \textbf{TD error ($\delta_t$)}:
 \begin{equation}
-V^\pi(s_t)=\E_{p^\pi}\left[\rho(s_t,A_t)\dt+e^{-\gamma\dt}V^\pi(S_{t+\dt})\right].
-\label{eq:bellman-exp}
+    \delta_t = r_t + \gamma_{\text{discrete}} V_{\bar{\theta}}(s_{t+1}) - V_{\theta}(s_t)
+\end{equation}
+where $\bar{\theta}$ denotes a detached, frozen copy of the network parameters used to compute the bootstrap target to maintain training stability. The corresponding network value loss optimized via gradient descent is defined as:
+\begin{equation}
+    \mathcal{L}_{\text{TD}}(\theta) = \frac{1}{2} \mathbb{E} \left[ \delta_t^2 \right]
 \end{equation}
 
-\subsection{Contrast with Stochastic Control}
-Prior work on continuous RL often starts by introducing the HJB equation, the continuous counterpart of \eqref{eq:bellman-opt}. For instance:
-\begin{equation}
-V^*(s_t)=\frac{1}{\gamma}\max_\pi \E_\pi\left[
-\rho(s_t,A_t)+\sum_{i=1}^{n}\mu^i(s_t,A_t)\frac{\partial V^*(s)}{\partial s_i}\bigg|_{s=s_t}
-+\frac{1}{2}\sum_{i=1}^{n}\sum_{j=1}^{n}
-[\sigma(s_t,A_t)\sigma^\top(s_t,A_t)]^{ij}
-\frac{\partial^2 V^*(s)}{\partial s_i\partial s_j}\bigg|_{s=s_t}
-\right].
-\label{eq:hjb-opt}
-\end{equation}
-However, introducing the HJB equation typically restricts the methodology to model-based approaches, since the update requires explicit access to $\mu$ and $\sigma$. Our goal is to design model-free algorithms that explicitly leverage continuity, which leads us to a fixed-policy variant of the HJB equation.
+While this formulation underpins most state-of-the-art discrete reinforcement learning algorithms, it exhibits a structural flaw when dealing with underlying continuous-time setups. Because the value function update only evaluates discrete, disjoint state-action pairs $(s_t, s_{t+1})$, the sampling mechanism skips over all intermediate spatial states traversed during the observation window, disregarding continuity information.
 
-\section{TD Method for Stochastic Continuous Dynamics}
-Embedding the SDE information in the argument of the expectation rather than only in the transition kernel can keep continuity information from being lost under sample approximation. Expanding $V(S_{t+\dt})$ via It\^o's formula gives the fixed-policy HJB equation
-\begin{equation}
-V^\pi(s_t)=\frac{1}{\gamma}\E_\pi\left[
-\rho(s_t,A_t)+\sum_{i=1}^{n}\mu^i(s_t,A_t)\frac{\partial V^\pi(s)}{\partial s_i}\bigg|_{s_t}
-+\frac{1}{2}\sum_{i=1}^{n}\sum_{j=1}^{n}
-[\sigma(s_t,A_t)\sigma^\top(s_t,A_t)]^{ij}
-\frac{\partial^2 V^\pi(s)}{\partial s_i\partial s_j}\bigg|_{s_t}
-\right].
-\label{eq:fixed-policy-hjb}
-\end{equation}
-This still contains $\mu$ and $\sigma$, so it is not directly model-free.
+\subsection{The Actor-Critic Optimization Paradigm}
+While the classical TD learning framework outlines how to evaluate a value function under a fixed policy, modern continuous control reinforcement learning algorithms - such as Proximal Policy Optimization (PPO) - must simultaneously optimize the underlying policy to maximize expected returns. This is naturally operationalized via the Actor-Critic architecture. This framework splits the decision-making and evaluation tasks between two specialized neural network function approximators:
 
-\subsection{Deriving TD from the HJB Equation}
-\begin{proposition}
-When $(S_t)_{t\ge0}$ follows the SDE in \eqref{eq:sde}, we have
-\begin{equation}
-\E_{p^\pi}[\mu^i(s_t,A_t)]
-=\lim_{\dt\to0}\E_{p^\pi}\left[\frac{S^i_{t+\dt}-s^i_t}{\dt}\right],
-\label{eq:drift-limit}
-\end{equation}
-and
-\begin{equation}
-\E_{p^\pi}\left[[\sigma(s_t,A_t)\sigma^\top(s_t,A_t)]^{ij}\right]
-=\lim_{\dt\to0}\E_{p^\pi}\left[
-\frac{(S^i_{t+\dt}-s^i_t)(S^j_{t+\dt}-s^j_t)}{\dt}
-\right].
-\label{eq:diffusion-limit}
-\end{equation}
-\end{proposition}
-
-\begin{proof}
-For the first claim, expand the $i$-th component of \eqref{eq:sde}:
-\begin{equation}
-S^i_{t+\dt}=s^i_t+\mu^i(s_t,A_t)\dt+
-\sum_{j=1}^{m}\sigma^{ij}(s_t,A_t)(B^j_{t+\dt}-B^j_t)+O(\dt^{3/2}).
-\end{equation}
-Since $B^j_{t+\dt}-B^j_t$ is zero-mean Gaussian and independent of the state and action, taking expectations and letting $\dt\to0$ yields \eqref{eq:drift-limit}. For the second claim, consider
-\begin{align}
-(S^i_{t+\dt}-s^i_t)(S^j_{t+\dt}-s^j_t)
-&=\mu^i(s_t,A_t)\mu^j(s_t,A_t)\dt^2 \notag\\
-&\quad+\sum_{k=1}^{m}\sum_{\ell=1}^{m}\sigma^{ik}(s_t,A_t)\sigma^{j\ell}(s_t,A_t)
-(B^k_{t+\dt}-B^k_t)(B^\ell_{t+\dt}-B^\ell_t) \notag\\
-&\quad+\mu^i(s_t,A_t)\dt\sum_{k=1}^{m}\sigma^{jk}(s_t,A_t)(B^k_{t+\dt}-B^k_t) \notag\\
-&\quad+\mu^j(s_t,A_t)\dt\sum_{k=1}^{m}\sigma^{ik}(s_t,A_t)(B^k_{t+\dt}-B^k_t)+O(\dt^{3/2}).
-\end{align}
-Using $\E[(B^k_{t+\dt}-B^k_t)(B^\ell_{t+\dt}-B^\ell_t)]=\delta_{k\ell}\dt$ and letting $\dt\to0$ gives \eqref{eq:diffusion-limit}.
-\end{proof}
-
-\begin{remark}
-Since $S_{t+\dt}$ is sampled under policy $\pi$, the method is not applicable to off-policy settings such as value iteration or Q-learning. The formulation relies on the HJB equation under a fixed policy.
-\end{remark}
-
-From Proposition 1, the fixed-policy HJB equation can be reformulated without explicit access to $\mu$ and $\sigma$:
-\begin{equation}
-V^\pi(s_t)=\frac{1}{\gamma}\lim_{\dt\to0}\E_{p^\pi}\left[
-\rho(s_t,A_t)+\sum_{i=1}^{n}\frac{S^i_{t+\dt}-s^i_t}{\dt}\frac{\partial V^\pi(s)}{\partial s_i}\bigg|_{s_t}
-+\frac{1}{2}\sum_{i=1}^{n}\sum_{j=1}^{n}
-\frac{(S^i_{t+\dt}-s^i_t)(S^j_{t+\dt}-s^j_t)}{\dt}
-\frac{\partial^2 V^\pi(s)}{\partial s_i\partial s_j}\bigg|_{s_t}
-\right].
-\end{equation}
-
-\begin{definition}[Differential temporal difference]
-Let $\dt>0$ be a time step and $\widehat V$ denote an estimated value function. The dTD is
-\begin{equation}
-\mathrm{dTD}:=\frac{1}{\gamma}\left(
-\rho(s_t,a_t)+\sum_{i=1}^{n}\frac{s^i_{t+\dt}-s^i_t}{\dt}
-\frac{\partial\widehat V(s)}{\partial s_i}\bigg|_{s_t}
-+\frac{1}{2}\sum_{i=1}^{n}\sum_{j=1}^{n}
-\frac{(s^i_{t+\dt}-s^i_t)(s^j_{t+\dt}-s^j_t)}{\dt}
-\frac{\partial^2\widehat V(s)}{\partial s_i\partial s_j}\bigg|_{s_t}
-\right)-\widehat V(s_t).
-\label{eq:dtd}
-\end{equation}
-\end{definition}
-
-\begin{figure}[t]
-\centering
-\includegraphics[page=5,width=\linewidth,trim={50pt 365pt 45pt 155pt},clip]{Paper.pdf}
-\caption{Qualitative difference between the typical TD method and the proposed dTD method; the objects in red indicate what is adjusted by each temporal difference.}
-\label{fig:qualitative}
-\end{figure}
-
-As illustrated in Figure~\ref{fig:qualitative}, unlike conventional TD methods based on transition kernels, dTD encourages the learning of a smooth value function by incorporating continuity of the state space. The ODE version can be recovered by removing the diffusion term.
-
-\subsection{Convergence Analysis}
-A standard TD convergence analysis relies on the Bellman operator being a contraction. In contrast, the fixed-policy HJB operator involves unbounded differential operators and is not generally a contraction. We adopt an idealized function-space analysis and study the continuous-time limit of the induced dynamics.
-
-\begin{definition}[Fixed-policy HJB operator]
-Given a stationary Markov policy $\pi$, discount rate $\gamma>0$, and functions $\mu,\sigma,\rho$, define
-\[
-\bar\mu(s):=\E_{A\sim\pi(\cdot|s)}[\mu(s,A)],\quad
-D(s):=\E_{A\sim\pi(\cdot|s)}[\sigma(s,A)\sigma^\top(s,A)],\quad
-\bar\rho(s):=\E_{A\sim\pi(\cdot|s)}[\rho(s,A)].
-\]
-The fixed-policy HJB operator $T$ maps $V:\mathcal{S}\to\R$ to
-\[
-(TV)(s):=\frac{1}{\gamma}\left(\bar\rho(s)+(L^\pi V)(s)\right).
-\]
-\end{definition}
-
-\begin{definition}[Infinitesimal generator]
-The infinitesimal generator $L^\pi$ maps any $C^2$ function $V$ to
-\[
-(L^\pi V)(s):=\bar\mu(s)\cdot\nabla V(s)+\frac{1}{2}\mathrm{tr}\left(D(s)\nabla^2V(s)\right).
-\]
-\end{definition}
-
-We analyze the iterative scheme $V_{k+1}=V_k+\eta_k(TV_k-V_k)$ through its continuous-time limit
-\[
-\frac{\partial V(t)}{\partial t}=TV(t)-V(t).
-\]
-The fixed-point equation $TV=V$ is equivalent to
-\[
-(\gamma I-L^\pi)V(s)=\bar\rho(s).
-\]
-
-\begin{assumption}
-We assume: (i) $\mathcal{S}\subset\R^n$ is bounded with $C^2$ boundary $\partial\mathcal{S}$; (ii) $\bar\rho\in L^2(\mathcal{S})$, $D\in W^{1,\infty}(\mathcal{S};\R^{n\times n})$ is symmetric, and $b:=\bar\mu-\frac{1}{2}\mathrm{div}\,D\in L^\infty(\mathcal{S};\R^n)$; (iii) there exists $\alpha>0$ such that $\xi^\top D(s)\xi\ge\alpha\|\xi\|^2$; (iv) the Neumann condition $n\cdot D\nabla V=0$ holds on $\partial\mathcal{S}$; and (v) $\gamma>\|b\|_\infty^2/\alpha$.
-\end{assumption}
-
-\begin{lemma}[Existence and uniqueness of the fixed point]
-Under Assumption 1, the linear elliptic PDE
-\[
-(\gamma I-L^\pi)V(s)=\bar\rho(s),\qquad s\in\mathcal{S},
-\]
-admits a unique weak solution $V^\pi\in H^1(\mathcal{S})$.
-\end{lemma}
-
-\begin{proposition}[Exponential stability of the dynamics]
-Let $V^\pi\in H^1(\mathcal{S})$ be the unique weak solution of $(\gamma I-L^\pi)V=\bar\rho$. Under Assumption 1, the solution $V(t)$ of
-\[
-\frac{\partial V(t)}{\partial t}=TV(t)-V(t)
-\]
-satisfies, for any $V(0)\in H^1(\mathcal{S})$,
-\[
-\|V(t)-V^\pi\|_{L^2(\mathcal{S})}\le
-\exp(-\lambda t)\|V(0)-V^\pi\|_{L^2(\mathcal{S})},
-\]
-where
-\[
-\lambda=\frac{1}{\gamma}\left(\gamma-\frac{\|b\|_\infty^2}{\alpha}\right)>0,\qquad
-b:=\bar\mu-\frac{1}{2}\mathrm{div}\,D.
-\]
-\end{proposition}
-
-\section{Method}
-This section outlines how dTD is applied in deep RL. We represent the value function with a neural network; pseudocode is provided in Appendix~\ref{app:algorithm}.
-
-\subsection{Loss Function}
-In deep RL, TD methods typically use a fixed target, $r(s,t)+\gamma_{\mathrm{discrete}}V(s_{t+1})$, as the teacher and minimize squared error to the prediction $V(s_t)$. Although it may seem natural to treat $V(s_t)$ in \eqref{eq:dtd} as the prediction and the remaining terms as the target, the split between prediction and target is a design choice. We examine two variants:
-\begin{itemize}
-\item \textbf{naive-dTD}: treats $V(s_t)$ as the prediction, following the classical TD-style decomposition.
-\item \textbf{dTD}: treats value-based terms as the target and derivative-based terms as the prediction.
-\end{itemize}
-
-\begin{table}[t]
-\centering
-\small
-\caption{Comparison of target and prediction terms in TD methods. Here, $\Delta s_t^i=s^i_{t+\Delta t}-s^i_t$.}
-\begin{tabular}{lll}
-\toprule
-Method & Target & Prediction\\
-\midrule
-TD & $r(s,t)+\gamma_{\mathrm{discrete}}V(s_{t+1})$ & $V(s_t)$\\
-naive-dTD &
-$\rho(s_t,a_t)+\sum_i \frac{\Delta s_t^i}{\Delta t}\partial_i V
-+\frac12\sum_{ij}\frac{\Delta s_t^i\Delta s_t^j}{\Delta t}\partial_{ij}V$
-& $\gamma V(s_t)$\\
-dTD & $-\rho(s_t,a_t)+\gamma V(s_{t+\Delta t})$ &
-$\sum_i \frac{\Delta s_t^i}{\Delta t}\partial_i V
-+\frac12\sum_{ij}\frac{\Delta s_t^i\Delta s_t^j}{\Delta t}\partial_{ij}V$\\
-\bottomrule
-\end{tabular}
-\label{tab:targets}
-\end{table}
-
-\subsection{Hybrid Scheme for Stabilizing dTD}
-Because Proposition 2 relies on an idealized setting and does not cover practical instability from function approximation, we linearly combine the classical TD error with the dTD error, using weights $1-\beta$ and $\beta$, respectively. We call the resulting update $\beta$-dTD. The TD part supplies empirical stability, whereas the dTD part injects gradient information from continuous dynamics.
-
-\section{Experiments}
-\subsection{Modification for Discrete Environment Compatibility}
-The continuous reward formulation is approximated by
-\[
-\int_0^\infty e^{-\gamma t}\rho(s_t,a_t)\dd t\approx
-\sum_{k=0}^{\infty}e^{(-\gamma\Delta t)k}\rho(s_{k\Delta t},a_{k\Delta t})\Delta t.
-\]
-Thus $\rho(s_t,a_t)\Delta t$ corresponds to the discrete reward $r$, and $e^{-\gamma\Delta t}$ corresponds to the discrete discount ratio $\gamma_{\mathrm{discrete}}$:
-\[
-\rho(s_t,a_t)=\frac{r(s_t,a_t)}{\Delta t},\qquad
-\gamma=-\frac{1}{\Delta t}\log(\gamma_{\mathrm{discrete}}).
-\]
-With this scaling, dTD can be computed as
-\[
-\text{dTD Target}: -r(s_t,a_t)-\log(\gamma_{\mathrm{discrete}})V(s_{t+\Delta t}),
-\]
-\[
-\text{dTD Prediction}:
-\sum_{i=1}^{n}(s^i_{t+\Delta t}-s^i_t)\frac{\partial V(s)}{\partial s_i}\bigg|_{s_t}
-+\frac12\sum_{i=1}^{n}\sum_{j=1}^{n}(s^i_{t+\Delta t}-s^i_t)(s^j_{t+\Delta t}-s^j_t)
-\frac{\partial^2 V(s)}{\partial s_i\partial s_j}\bigg|_{s_t}.
-\]
-
-\subsection{Experiment Design}
-\paragraph{Environment.}
-We conducted experiments with the Brax library \cite{freeman2021} in Hopper, HalfCheetah, Ant, and Humanoid. Each environment provides a mid- to high-dimensional state space: Hopper has 11 dimensions, HalfCheetah 17, Ant 27, and Humanoid 244. At every step, each state component was perturbed by
-\[
-s^i\leftarrow s^i+\mathrm{coef}\times|s^i|\times\mathrm{noise},
-\qquad \mathrm{noise}\sim\mathcal{N}(0,1),
-\]
-with $\mathrm{coef}\in\{0.00,0.01,0.05\}$. The time steps were Hopper: $\Delta t=0.008$, HalfCheetah: $\Delta t=0.05$, Ant: $\Delta t=0.05$, and Humanoid: $\Delta t=0.015$.
-
-\paragraph{Baseline.}
-We used standard TD methods as baselines and experimented with TD, $\beta$-naive-dTD, and $\beta$-dTD, using A2C \cite{mnih2016} and PPO \cite{schulman2017}. PPO results are the primary focus; A2C results are in Appendix~\ref{app:a2c}.
-
-\paragraph{Hyperparameter tuning.}
-For hyperparameter tuning, we applied DEHB \cite{awad2021}, a multi-fidelity method that is effective in RL \cite{eimer2023}. Additional search spaces are in Appendix~\ref{app:hparams}.
-
-\begin{figure}[t]
-\centering
-\includegraphics[page=9,width=\linewidth,trim={40pt 70pt 35pt 120pt},clip]{Paper.pdf}
-\caption{Performance of TD, $\beta$-naive-dTD, and $\beta$-dTD on continuous control benchmarks using PPO. Columns correspond to noise levels and rows correspond to environments.}
-\label{fig:ppo}
-\end{figure}
-
-\subsection{Results and Discussion}
-\paragraph{Comparative evaluation.}
-Figure~\ref{fig:ppo} compares the proposed method and the baseline. $\beta$-dTD consistently outperforms $\beta$-naive-dTD. In all environments, optimized $\beta$ values for $\beta$-naive-dTD were small, suggesting that its effective update rule became close to standard TD; nevertheless, it remained significantly worse than standard TD. By contrast, $\beta$-dTD outperforms TD or achieves comparable performance in all cases. Although final performance can converge because TD and dTD are derived from the same Bellman equation, dTD can make more informative updates by using continuity information during training.
-
-\paragraph{Significance of dTD.}
-In contrast to $\beta$-naive-dTD, the weight $\beta$ in $\beta$-dTD is not exceedingly small. In HalfCheetah, $\beta$ is 0.74, indicating that dTD retains a meaningful impact on learning.
-
-\paragraph{Impact of process noise.}
-Both $\beta$-dTD and TD exhibit similar robustness to process noise. With $\mathrm{coef}=0.01$, neither method degrades substantially. With $\mathrm{coef}=0.05$, both show reduced performance, particularly in Ant and HalfCheetah.
-
-\section{Conclusion}
-We presented differential TD (dTD), a temporal difference method based on the HJB equation. In contrast to approaches based on transition kernels, the proposed method can incorporate the continuity of dynamics into the learning process without knowing the dynamics. We showed empirical results for continuous control environments with different time intervals. The results highlight the potential advantages of dTD in learning speed and efficiency while also implying that stability concerns may exist in practice, motivating the robust $\beta$-dTD update.
-
-We also analyzed conditions under which the continuous-time dynamics of the HJB equation exhibit exponential stability toward the unique fixed point. This stability property, proven using linear elliptic PDE theory, is crucial for showing theoretical convergence of the idealized iterative scheme. However, sufficient conditions such as bounded domains and uniform ellipticity are often hard to maintain or verify in deep RL with function approximation.
-
-Future work includes bridging the gap between theoretical exponential stability and practical stability of dTD updates, reducing variance through improved estimators or regularization, and extending TD-based techniques to the dTD framework.
-
-\paragraph{Acknowledgements.}
-NT was supported by JST PRESTO JPMJPR24T6, JSPS JP20K19869, and JSPS JP25H01454.
-
-\appendix
-\section{Mathematical Details}
-\subsection{Justification for the Continuous RL Formulation}
-In Section 3, we modeled the state under a stochastic policy by
-\[
-\dd S_t=\mu(S_t,A_t)\dd t+\sigma(S_t,A_t)\dd B_t,\qquad A_t\sim\pi(\cdot|S_t).
-\]
-The presence of external randomness from stochastic action selection introduces analytical difficulties. Prior work often adopts averaged dynamics $(\widetilde S_t)_{t\ge0}$, whose marginal distribution at each time coincides with the original one under the same initial condition:
-\[
-\dd\widetilde S_t=\widetilde\mu(\widetilde S_t,\pi)\dd t+\widetilde\sigma(\widetilde S_t,\pi)\dd\widetilde B_t,
-\]
-where
-\[
-\widetilde\mu(s,\pi)=\int_\mathcal{A}\mu(s,a)\pi(a)\dd a,\qquad
-\widetilde\sigma(s,\pi)=\left(\int_\mathcal{A}\sigma(s,a)\sigma^\top(s,a)\pi(a)\dd a\right)^{1/2}.
-\]
-Since the marginal distributions coincide, the value functions also coincide:
-\[
-V^\pi(s)=\E_{p^\pi}\left[\int_t^\infty e^{-\gamma(\tau-t)}\rho(S_\tau,A_\tau)\dd\tau\mid S_t=s\right]
-=\E_{\widetilde p}\left[\int_t^\infty e^{-\gamma(\tau-t)}\widetilde\rho(\widetilde S_\tau,\pi)\dd\tau\mid \widetilde S_t=s\right],
-\]
-where $\widetilde\rho(s,\pi)=\int_\mathcal{A}\rho(s,a)\pi(a)\dd a$.
-
-\subsection{It\^o Formula}
-Assuming $(S_t)_{t\ge0}$ follows \eqref{eq:sde}, the term $V^*(S_{t+\Delta t})$ can be expanded using It\^o's lemma:
-\begin{align}
-V^*(s_t)
-&=\max_\pi\E_{p^\pi}\left[\rho(s_t,A_t)\Delta t+e^{-\gamma\Delta t}V^*(S_{t+\Delta t})\right]\notag\\
-&=\max_\pi\E_{p^\pi}\Bigg[
-\rho(s_t,A_t)\Delta t+e^{-\gamma\Delta t}\Bigg\{V^*(s_t)
-+\left(\sum_{i=1}^{n}\mu^i(s_t,A_t)\partial_iV^*(s_t)\right.\notag\\
-&\qquad\left.
-+\frac12\sum_{i=1}^{n}\sum_{j=1}^{n}[\sigma(s_t,A_t)\sigma^\top(s_t,A_t)]^{ij}\partial_{ij}V^*(s_t)\right)\Delta t
-+O(\Delta t^{3/2})\Bigg\}\Bigg].
-\end{align}
-Simplifying and taking the limit as $\Delta t\to0$ gives \eqref{eq:hjb-opt}.
-
-\subsection{Convergence of dTD}
-\subsubsection{Proof of Lemma 1}
-Consider
-\[
-(\gamma I-L^\pi)V=\bar\rho\quad\text{in }\mathcal{S},\qquad n\cdot D\nabla V=0\quad\text{on }\partial\mathcal{S},
-\]
-where
-\[
-(L^\pi V)(s)=\frac12\nabla\cdot(D(s)\nabla V(s))+b(s)\cdot\nabla V(s),\qquad
-b:=\bar\mu-\frac12\mathrm{div}\,D.
-\]
-For $v\in H^1(\mathcal{S})$, integration by parts gives the weak formulation
-\[
-B(V,v)=f(v),
-\]
-where
-\[
-B(u,v):=\int_\mathcal{S}\gamma uv+\frac12\int_\mathcal{S}(D\nabla u)\cdot\nabla v-\int_\mathcal{S}(b\cdot\nabla u)v,\qquad
-f(v):=\int_\mathcal{S}\bar\rho v.
-\]
-Since $D,b$ are bounded, $B$ is bounded on $H^1(\mathcal{S})$. Since $\bar\rho\in L^2(\mathcal{S})$, $f$ is bounded. Uniform ellipticity and Young's inequality give
-\[
-B(v,v)\ge\left(\gamma-\frac{\|b\|_\infty^2}{\alpha}\right)\|v\|_{L^2}^2+\frac{\alpha}{4}\|\nabla v\|_{L^2}^2.
-\]
-Under Assumption 1, $B$ is coercive. The Lax-Milgram theorem implies a unique weak solution $V^\pi\in H^1(\mathcal{S})$.
-
-\subsubsection{Proof of Proposition 2}
-Let $e(t):=V(t)-V^\pi$. Since $V^\pi$ satisfies $(\gamma I-L^\pi)V^\pi=\bar\rho$ and
-\[
-\partial_tV=-\gamma^{-1}(\gamma I-L^\pi)V+\gamma^{-1}\bar\rho,
-\]
-we obtain
-\[
-\partial_t e(t)=-\frac1\gamma(\gamma I-L^\pi)e(t).
-\]
-Using the weak formulation with test function $e(t)$,
-\[
-\frac12\frac{\dd}{\dd t}\|e(t)\|_{L^2(\mathcal{S})}^2
-=-\frac1\gamma B(e(t),e(t)).
-\]
-The coercivity estimate gives
-\[
-\frac{\dd}{\dd t}\|e(t)\|_{L^2(\mathcal{S})}^2
-\le-\frac2\gamma\left(\gamma-\frac{\|b\|_\infty^2}{\alpha}\right)
-\|e(t)\|_{L^2(\mathcal{S})}^2.
-\]
-Gr\"onwall's inequality proves the claimed exponential bound.
-
-\section{Implementation Details}
-\subsection{Algorithm}
-\label{app:algorithm}
 \begin{enumerate}
-\item Initialize value function $V_\theta$ with random parameter $\theta$.
-\item For each training step, collect transitions $(s_t,a_t,s_{t+\Delta t},\rho_t)$ under policy $\pi$ into buffer $\mathcal{D}$.
-\item For each update step, sample a batch from $\mathcal{D}$, freeze a copy $\bar\theta\leftarrow\theta$, compute dTD targets and predictions, and update $\theta$ by minimizing the squared dTD residual.
+    \item \textbf{The Actor (Policy Network):} Parameterized by weights $\phi$, the actor represents the stochastic policy $\pi_\phi(a|s)$. Its objective is to propose optimal actions in a given state to maximize the long-term expected discounted return.
+    \item \textbf{The Critic (Value Network):} Parameterized by weights $\theta$, the critic represents the value function $V_\theta(s)$. It scores the expected utility of the states visited under the actor's current policy by minimizing the mean-squared temporal difference error $\delta_t$.
 \end{enumerate}
 
-\subsection{Efficient Computation of the dTD Loss}
-Although \eqref{eq:dtd} involves the Hessian, one can avoid directly calculating all $O(n^2)$ entries by rearranging
-\[
-\left\langle\Delta s_t,\frac{\partial^2V(s)}{\partial s^2}\bigg|_{s_t}\Delta s_t\right\rangle
-=
-\left\langle\Delta s_t,\frac{\partial}{\partial s}
-\left\langle\frac{\partial V}{\partial s},\Delta s_t\right\rangle\bigg|_{s_t}\right\rangle,
-\]
-which reduces practical computation to Hessian-vector products.
+During online execution, the calculated temporal difference error $\delta_t$ plays a dual role in driving joint parameter optimization. The critic uses the squared residual to update its value-matching landscape. Concurrently, the error serves as an unbiased advantage signal to update the actor:
+\begin{itemize}
+    \item If $\delta_t > 0$, the realized transition yielded a higher return than expected by the critic's  baseline; the actor's policy gradient update scales to increase the log-probability of that action under the current state.
+    \item If $\delta_t < 0$, the chosen action underperformed relative to expectation, and the actor updates to diminish its selection probability.
+\end{itemize}
 
-\subsection{Hyperparameters for PPO}
-\label{app:hparams}
-\begin{table}[h]
+This synchronized feedback loop establishes the baseline control framework. In the subsequent sections, we transition to a continuous-time optimal control perspective to show how this baseline can be regularized by substituting discrete pairs $(s_t, s_{t+\Delta t})$ with infinitesimal spatial derivatives derived from the environment's underlying stochastic differential equation.
+
+\subsection{The HJB Equation under a Fixed Policy}
+For a fixed policy $\pi$, our objective is to learn the value function $V^\pi(s)$, representing the expected discounted cumulative reward rate $\rho(s, a)$ over an infinite horizon:
+\begin{equation}
+    V^\pi(s) = \mathbb{E}_{p_\pi} \left[ \int_0^\infty e^{-\gamma t} \rho(S_t, A_t) dt \;\middle|\; S_0 = s \right]
+\end{equation}
+where $\gamma > 0$ is the continuous discount rate. In a discretized framework with an observation interval $\Delta t$, this satisfies the discrete-time Bellman expectation equation:
+\begin{equation}
+    V^\pi(s_t) = \mathbb{E}_{p_\pi} \left[ \rho(s_t, A_t)\Delta t + e^{-\gamma \Delta t} V^\pi(S_{t+\Delta t}) \right]
+\end{equation}
+Assuming that $V^\pi$ is at least $C^2$, we can expand the term $V^\pi(S_{t+\Delta t})$ using It\^o's formula:
+\begin{align}
+    V^\pi(S_{t+\Delta t}) &= V^\pi(s_t) + \left( \sum_{i=1}^n \mu^i(s_t, A_t) \frac{\partial V^\pi(s)}{\partial s^i}\Big|_{s_t} \right.\nonumber\\
+    &\quad \left. + \frac{1}{2} \sum_{i=1}^n \sum_{j=1}^n \left[\sigma(s_t, A_t)\sigma^\top(s_t, A_t)\right]^{ij} \frac{\partial^2 V^\pi(s)}{\partial s^i \partial s^j}\Big|_{s_t} \right) \Delta t \nonumber\\
+    &\quad + \sum_{i=1}^n \sum_{j=1}^m \sigma_j^i(s_t, A_t)\frac{\partial V^\pi(s)}{\partial s^i}\Big|_{s_t} (B^j_{t+\Delta t} - B^j_t) + O(\Delta t^{3/2})
+\end{align}
+Taking the expectation $\mathbb{E}_{p_\pi}[\cdot]$, the martingale property eliminates the Brownian motion increment since $\mathbb{E}[B^j_{t+\Delta t} - B^j_t] = 0$. Approximating $e^{-\gamma \Delta t} \approx 1 - \gamma \Delta t$, substituting the expansion back into the Bellman equation, dividing by $\Delta t$, and evaluating the continuous limit as $\Delta t \to 0$ yields the Hamilton-Jacobi-Bellman (HJB) equation for a fixed policy:
+\begin{equation}
+    V^\pi(s_t) = \frac{1}{\gamma} \mathbb{E}_{\pi} \left[ \rho(s_t, A_t) + \sum_{i=1}^n \mu^i(s_t, A_t) \frac{\partial V^\pi(s)}{\partial s^i}\Big|_{s_t} + \frac{1}{2} \sum_{i=1}^n \sum_{j=1}^n [\sigma\sigma^\top]^{ij} \frac{\partial^2 V^\pi(s)}{\partial s^i \partial s^j}\Big|_{s_t} \right]
+\end{equation}
+
+\subsection{Model-Free Derivation of dTD}
+Direct sample-based evaluation of the HJB expectation equation is traditionally impossible without modeling $\mu$ and $\sigma$. To circumvent this limitation, \citet{settai2025} prove that the drift and diffusion coefficients can be replaced by taking the limits of sample-based finite differences of the state increments:
+\begin{align}
+    \mathbb{E}_{\pi}[\mu^i(s_t, A_t)] &= \lim_{\Delta t \to 0} \mathbb{E}_{p_\pi} \left[ \frac{S^i_{t+\Delta t} - s^i_t}{\Delta t} \right] \\
+    \mathbb{E}_{\pi}[[\sigma(s_t, A_t)\sigma^\top(s_t, A_t)]^{ij}] &= \lim_{\Delta t \to 0} \mathbb{E}_{p_\pi} \left[ \frac{(S^i_{t+\Delta t} - s^i_t)(S^j_{t+\Delta t} - s^j_t)}{\Delta t} \right]
+\end{align}
+Substituting these finite-difference estimators into the fixed-policy HJB equation yields a model-free continuous-time residual operator. Let $\hat{V}$ represent an estimated value function parameterized by a neural network, and define $\Delta s_t = s_{t+\Delta t} - s_t$. The differential temporal difference (dTD) residual is given by:
+\begin{equation}
+    \label{eq:residual}
+    dTD := \frac{1}{\gamma} \left( \rho(s_t, a_t) + \frac{\Delta s_t}{\Delta t} \cdot \nabla \hat{V}(s_t) + \frac{1}{2\Delta t} \Delta s_t^\top \nabla^2 \hat{V}(s_t) \Delta s_t \right) - \hat{V}(s_t)
+\end{equation}
+
+\subsection{Method Overview}
+\subsubsection{From TD to dTD}
+The classic, well-established TD will serve as a performance benchmark. When incorporating the dTD residual into a gradient descent framework, the architectural division between the target (detached teacher) and prediction (gradient-receiving student) is not unique according to \cite{settai2025}. While \textit{naive-dTD} maintains the traditional layout where the standalone value function $\gamma V(s_t)$ acts as the prediction, the refined \textit{dTD} scheme maps the spatial gradients and Hessians to the prediction term. This forces gradient descent to directly optimize the smoothness and geometry of the critic network rather than merely performing value-matching. It is worth highlighting that the prediction parameters receive active gradient updates, while the bootstrap target is detached to remain constant during the optimization step.
+
+\begin{table}[htbp]
 \centering
-\small
-\caption{Hyperparameter search space.}
-\begin{tabular}{ll}
+\caption{Comparison of Target and Prediction terms across different TD formulations.}
+\label{tab:td_methods}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lll}
 \toprule
-Hyperparameter & Search space\\
-\midrule
-Environment steps per update & $\{8,16,32\}$\\
-Number of epochs per update & $\mathrm{range}(5,20)$\\
-Minibatch size & $\{256,512\}$\\
-Learning rate & $\log([10^{-6},5\cdot10^{-3}])$\\
-Normalize advantage & $\{\mathrm{True},\mathrm{False}\}$\\
-GAE lambda & $[0.8,0.9999]$\\
-Clip range & $[0.0,0.9]$\\
-Entropy coefficient & $[0.0,0.3]$\\
-Value loss weight & $[0.0,1.0]$\\
-Mixture ratio $\beta$ & $[0.0,1.0]$\\
-\bottomrule
-\end{tabular}
+\textbf{Method} & \textbf{Target (Fixed / Detached)} & \textbf{Prediction (Active Gradients)} \\ \midrule
+\textbf{Standard TD} & $r(s_t, a_t) + \gamma_{\text{discrete}} V(s_{t+1})$ & $V(s_t)$ \\ \addlinespace
+\textbf{naive-dTD} & $\rho(s_t, a_t) + \frac{\Delta s_t}{\Delta t} \cdot \nabla V + \frac{1}{2\Delta t} \Delta s_t^\top \nabla^2 V \Delta s_t$ & $\gamma V(s_t)$ \\ \addlinespace
+\textbf{dTD} & $-\rho(s_t, a_t) + \gamma V(s_{t+\Delta t})$ & $\frac{\Delta s_t}{\Delta t} \cdot \nabla V + \frac{1}{2\Delta t} \Delta s_t^\top \nabla^2 V \Delta s_t$ \\ \bottomrule
+\end{tabular}%
+}
 \end{table}
 
-\begin{table}[h]
-\centering
-\scriptsize
-\caption{Best hyperparameters for PPO with TD and $\beta$-dTD across environments.}
-\begin{tabular}{lrrrrrrrr}
-\toprule
-&\multicolumn{4}{c}{TD}&\multicolumn{4}{c}{$\beta$-dTD}\\
-\cmidrule(lr){2-5}\cmidrule(lr){6-9}
-Hyperparameter & Hopper & HalfCheetah & Ant & Humanoid & Hopper & HalfCheetah & Ant & Humanoid\\
-\midrule
-Steps/update & 32 & 16 & 8 & 16 & 32 & 8 & 32 & 16\\
-Epochs/update & 7 & 5 & 11 & 15 & 19 & 9 & 16 & 10\\
-Minibatch & 512 & 256 & 512 & 512 & 256 & 256 & 256 & 256\\
-Learning rate & 1.18e-3 & 5.93e-4 & 3.71e-4 & 1.40e-3 & 3.52e-4 & 3.29e-4 & 7.94e-5 & 1.08e-3\\
-Normalize adv. & F & F & F & F & F & F & F & F\\
-GAE lambda & .886 & .833 & .935 & .999 & .998 & .908 & .805 & .888\\
-Clip range & .439 & .268 & .425 & .063 & .075 & .040 & .520 & .713\\
-Entropy coef. & .121 & .018 & .162 & .021 & .046 & .011 & .133 & .002\\
-Value loss wt. & .049 & .513 & .711 & .091 & .675 & .268 & .274 & .054\\
-$\beta$ & -- & -- & -- & -- & .572 & .742 & .241 & .332\\
-\bottomrule
-\end{tabular}
-\end{table}
+\subsubsection{\texorpdfstring{$\beta$}{beta}-dTD Stabilization Scheme}
+While the pure dTD formulation possesses elegant continuous-time convergence properties in an idealized infinite-dimensional functional space, implementing it with non-linear neural network function approximators introduces significant practical instabilities. In empirical settings, function approximation errors and optimization noise can cause plain dTD updates to diverge or become trapped in spurious attractors. 
 
-\subsection{Details of the A2C Implementation}
-\label{app:a2c}
-\begin{figure}[t]
-\centering
-\includegraphics[page=18,width=\linewidth,trim={35pt 90pt 30pt 75pt},clip]{Paper.pdf}
-\caption{Performance of TD and $\beta$-dTD on continuous control benchmarks using A2C.}
-\label{fig:a2c}
+To regularize the training dynamics and provide empirical robustness, \citet{settai2025} introduced a hybrid objective framework termed $\beta$-dTD. This scheme forms a linear combination of the classical discrete-time temporal difference loss and the continuous-time dTD loss using a mixture parameter $\beta \in [0, 1]$. Let $\mathcal{L}_{\text{TD}}(\theta)$ define the standard mean-squared Bellman error loss and $\mathcal{L}_{\text{dTD}}(\theta)$ represent the mean-squared differential error loss over a mini-batch of sampled transitions $\mathcal{D}$:
+\begin{align}
+    \mathcal{L}_{\text{TD}}(\theta) &= \frac{1}{|\mathcal{D}|} \sum_{d \in \mathcal{D}} \left( \left[ r(s_t^d, a_t^d) + \gamma_{\text{discrete}} V_{\bar{\theta}}(s_{t+\Delta t}^d) \right] - V_\theta(s_t^d) \right)^2 \\
+    \mathcal{L}_{\text{dTD}}(\theta) &= \frac{1}{|\mathcal{D}|} \sum_{d \in \mathcal{D}} \left( y_d - \left[ \frac{\Delta s_t^d}{\Delta t} \cdot \nabla V_\theta(s_t^d) + \frac{1}{2\Delta t} (\Delta s_t^d)^\top \nabla^2 V_\theta(s_t^d) \Delta s_t^d \right] \right)^2
+\end{align}
+where $\bar{\theta}$ denotes the detached target network parameters and $y_d = -\rho(s_t^d, a_t^d) + \gamma V_{\bar{\theta}}(s_{t+\Delta t}^d)$ represents the detached dTD target. The complete $\beta$-dTD optimization objective is formulated as:
+\begin{equation}
+    \mathcal{L}_{\beta\text{-dTD}}(\theta) = (1 - \beta) \mathcal{L}_{\text{TD}}(\theta) + \beta \mathcal{L}_{\text{dTD}}(\theta)
+\end{equation}
+
+By parameterizing the update rule this way, the standard discrete TD component acts as a stabilizing anchor that ensures global convergence, while the dTD term injects information of continuity via spatial gradient and Hessian trajectory geometry directly into the network updates. Setting $\beta = 0$ perfectly recovers the standard discrete-time TD algorithm, whereas $\beta = 1$ simplifies to the pure model-free HJB differential update.
+
+\section{Replication of Benchmark Results}
+\label{sec:replication}
+
+\subsection{Experimental Setup and Hyperparameters}
+To validate the empirical claims of \citet{settai2025}, we first replicated the continuous control benchmarks using the Brax physics engine across four distinct high-dimensional environments: Hopper ($11$ dimensions), HalfCheetah ($17$ dimensions), Ant ($27$ dimensions), and Humanoid ($244$ dimensions). Following the paper's experimental protocol, we evaluated the algorithms under three discrete observation noise coefficients ($\text{coeff} \in \{0.00, 0.01, 0.05\}$). It is worth mentioning that the dynamics for this experiment are not an SDE; they are fully deterministic. Randomness only occurs in the observation of the state:
+\begin{equation}
+    s_i \leftarrow s_i + \text{coeff} \times |s_i| \times \epsilon, \quad \epsilon \sim \mathcal{N}(0, 1)
+\end{equation}
+The optimal mixture ratios identified for $\beta$-dTD were $\beta = 0.572$ for Hopper, $\beta = 0.742$ for HalfCheetah, $\beta = 0.241$ for Ant, and $\beta = 0.332$ for Humanoid, so the tuned $\beta$ for $\beta$-dTD is non-negligible.
+
+\subsection{Comparative Analysis and Discussion}
+As demonstrated in Figure~\ref{fig:replication_comparison}, our replicated training trajectories highly conform to the findings reported by \citet{settai2025}. 
+
+\begin{figure}[p]
+    \centering
+    \begin{subfigure}[b]{\textwidth}
+        \centering        \includegraphics[width=0.85\textwidth,height=0.40\textheight,keepaspectratio]{media/SettaiResults.png} 
+        \caption{Original Baseline Results \cite{settai2025}} $\beta$-dTD in red, TD in grey, $\beta$-naive-dTD in blue 
+        \label{fig:paper_res}
+    \end{subfigure}
+    
+    \vspace{0.3cm} % Reduced vertical space for page constraint
+    
+    % Bottom Panel: Your Replicated Results
+    \begin{subfigure}[b]{\textwidth}
+        \centering
+        % Matching the constraints from the top panel ensures a clean comparison
+        \includegraphics[width=\textwidth,height=0.40\textheight,keepaspectratio]{media/all_envs_average.png}
+        \caption{Replicated Group Results. $\beta$-dTD in red, TD in grey}
+        \label{fig:our_res}
+    \end{subfigure}
+    
+    % The space for the final main caption is now protected
+    \caption[Comparative evaluation of episodic learning trajectories across standard and continuous TD formulations.]{Comparative evaluation of episodic learning trajectories between standard TD and continuous-time formulations across various observation noise profiles ($\text{coeff} \in \{0.00, 0.01, 0.05\}$). Stacking provides a direct alignment check across both experimental grids.}
+    \label{fig:replication_comparison}
+\end{figure}
+Two critical insights emerge from the benchmarking phase:
+\begin{enumerate}
+    \item \textbf{Failure of \textit{naive-dTD}:} In line with the paper's findings, the tuned value of $\beta$ for $\beta$-naive-dTD consistently collapsed toward $0$, approximating standard TD updates yet yielding structurally sub-optimal performance. This highlights that parameterizing the standalone function $\gamma V(s_t)$ as the gradient prediction target disrupts the training topology of neural network function approximators.
+    \item \textbf{Acceleration Properties of \textit{dTD}:} Conversely, $\beta$-dTD maintains a highly meaningful impact throughout the learning process because the optimized $\beta$ values remain large (notably $\beta = 0.742$ in HalfCheetah). While both standard TD and $\beta$-dTD eventually converge to similar asymptotic return boundaries due to sharing the underlying Bellman expectation target, $\beta$-dTD leverages spatial trajectory continuity to demonstrate a superior rate of policy improvement during early training stages.
+\end{enumerate}
+
+\section{Extension to the Merton Consumption-Investment Problem}
+As mentioned in the previous section, one major weakness of the experiments selected to test the dTD method is that they were not truly SDE-driven systems. To address this, we now consider a genuine SDE problem: the Merton consumption-investment problem.
+
+The Merton problem consists of maximizing the utility derived from consumption. To this end, we consider a wealth process $W_t$ with the following dynamics\footnote{The notation in this section is changed slightly to remain consistent with Merton's original notation. In particular, $\gamma$ now denotes the risk-aversion coefficient, $\rho$ the discount rate, and $r$ the risk-free rate.}:
+
+\begin{equation}
+\frac{d W_t}{W_t} = \big(r + \pi_t(\mu_{BS}-r) - \kappa_t\big)\,dt + \pi_t\,\sigma_{BS}\,dB_t,
+\qquad c_t = \kappa_t W_t,
+\end{equation}
+
+where $r$ is the risk-free rate, $\mu_{BS}$ the expected return of the risky asset, $\sigma_{BS}$ its volatility, $\pi_t$ the fraction of wealth invested in the risky asset, and $\kappa_t$ the fraction of wealth consumed. The objective is to maximize the expected discounted utility of consumption:
+
+\begin{equation}
+E\!\left[\int_0^\infty e^{-\rho t}\, U(c_t)\,dt\right],
+\qquad U(c)=\frac{c^{1-\gamma}}{1-\gamma}, \quad 0 < \gamma < 1.
+\end{equation}
+
+For this choice of utility function, there is a closed-form solution (\cite{merton1971optimum}). This is extremely useful, as it allows us to directly assess the quality of the learned value function, rather than relying on the evolution of the reward over training, as was necessary in the Brax experiments (where no closed-form solution exists).\TODO{add a brief appendix with the formulas?}
+
+% For this choice of utility function, a constant relative risk aversion (CRRA) specification, there exists a closed-form solution to the Merton problem \TODO{reference}:
+%
+% \begin{equation}\label{eq:sol_Merton}
+%      \pi^* = \frac{\mu_{BS}-r}{\gamma\sigma_{BS}^2},
+%         \qquad
+%         \kappa^* = \frac{\rho-(1-\gamma)\left(r + \frac{1}{2}\frac{(\mu_{BS}-r)^2}{\gamma\sigma_{BS}^2}\right)}{\gamma}.
+% \end{equation}
+%
+% Note that the solution in \eqref{eq:sol_Merton} is constant: although the wealth invested in the risky asset and the wealth consumed vary over time, their respective *fractions* of total wealth remain fixed. Under this optimal policy, the value function also admits a closed form:
+%
+% \begin{equation}
+%      V^{\pi,\kappa}(w)=A(\pi,\kappa)\,\frac{w^{1-\gamma}}{1-\gamma},
+% \end{equation}
+%
+% where
+%
+% \begin{equation}
+%       A(\pi,\kappa)=
+%             \frac{\kappa^{1-\gamma}}
+%             {\rho-(1-\gamma)\!\left[r+\pi(\mu_{BS}-r)-\kappa-\tfrac{1}{2}\gamma\pi^2\sigma_{BS}^2\right]}.
+% \end{equation}
+
+To evaluate the dTD method, we fix the optimal policy and learn the corresponding (optimal) value function via gradient descent on the dTD loss, or one of its variants. This procedure is summarized in Algorithm \ref{pseudo:dtd}.
+
+\begin{algorithm}[H]
+        \label{pseudo:dtd}
+        \caption{Infinite-Horizon dTD Learning}
+        \begin{algorithmic}[1]
+
+        \State \textbf{Initialize} critic parameters $\theta$ and initial states $w_0$
+
+        \For{each iteration}
+            \State Sample transitions $(w_t, w_{t+\Delta t}, r_t)$ under the fixed policy $(\pi^*,\kappa^*)$
+            \State Compute the dTD loss $\mathcal{L}(\theta)$
+            \State Update $\theta$ via gradient descent on $\mathcal{L}$
+            \State $w_t \leftarrow w_{t+\Delta t}$
+        \EndFor
+
+        \end{algorithmic}
+\end{algorithm}
+
+Unless otherwise stated, the following experiments use $\mu_{BS}=0.08$, $\sigma_{BS}=0.2$, $r=0.02$, $\Delta t = 1/252$, $\gamma=2$, and $\rho=0.08$.
+
+When pure dTD is used as the loss for learning the value function, the neural network parametrizing $V$ collapses to a constant, as shown in Figure \ref{fig:collapse}. This collapse persists even when the network is pre-trained using the closed-form expression for the optimal value function (see Figure \ref{fig:pretrained}).
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.3\linewidth]{media/dtd_value_fit.png}
+    \caption{Value function learned with the pure dTD loss}
+    \label{fig:collapse}
 \end{figure}
 
-\begin{table}[h]
-\centering
-\scriptsize
-\caption{Best hyperparameters for A2C with TD and $\beta$-dTD across environments.}
-\begin{tabular}{lrrrrrrrr}
-\toprule
-&\multicolumn{4}{c}{TD}&\multicolumn{4}{c}{$\beta$-dTD}\\
-\cmidrule(lr){2-5}\cmidrule(lr){6-9}
-Hyperparameter & Hopper & HalfCheetah & Ant & Humanoid & Hopper & HalfCheetah & Ant & Humanoid\\
-\midrule
-Steps/update & 32 & 16 & 8 & 16 & 16 & 8 & 8 & 16\\
-Epochs/update & 7 & 5 & 11 & 15 & 16 & 9 & 12 & 19\\
-Minibatch & 512 & 256 & 512 & 512 & 512 & 256 & 256 & 512\\
-Learning rate & 1.18e-3 & 5.93e-4 & 3.71e-4 & 1.40e-3 & 1.88e-6 & 3.52e-4 & 2.90e-6 & 6.83e-7\\
-Normalize adv. & F & F & F & F & F & F & F & T\\
-GAE lambda & .886 & .833 & .935 & .999 & .890 & .950 & .960 & .827\\
-Entropy coef. & .121 & .018 & .162 & .021 & .031 & 5.38e-6 & .094 & .046\\
-Value loss wt. & .049 & .513 & .711 & .091 & .825 & .602 & .457 & .546\\
-$\beta$ & -- & -- & -- & -- & .244 & .598 & .750 & .467\\
-\bottomrule
-\end{tabular}
-\end{table}
+The cause of this behavior was already outlined earlier. The drift estimator in the dTD residual (Equation \eqref{eq:residual}) is asymptotically unbiased but highly noisy. More precisely, the prediction term in the loss is given by
+$$\text{pred} = \frac{\Delta s}{\Delta t}\,\nabla V(s_t) + \frac{1}{2}\frac{(\Delta s)^2}{\Delta t}\,\nabla^2 V(s_t).$$
 
-\subsection{Computing Infrastructure and Reproducibility}
-Experiments were conducted on a machine with four NVIDIA Tesla V100 GPUs (32GB each) and an Intel Xeon E5-2698 v4 CPU. Hyperparameter tuning typically took 6--9 hours depending on the environment. Training time for final runs ranged from 10 to 60 minutes. All experiments used fixed random seeds in the training scripts, though full determinism cannot be ensured because MuJoCo accessed via Brax uses an internal random seed. The code is available at \url{https://github.com/4thhia/differential_TD}.
+Under an Euler–Maruyama discretization, the first term of this prediction can be decomposed as
 
-\section{NeurIPS Paper Checklist}
-The original PDF includes the NeurIPS checklist. The responses state that the paper's claims are reflected in the abstract and introduction, limitations are discussed, theoretical assumptions and proofs are provided, experimental settings and reproducibility details are disclosed, code is available, statistical variability is reported through error bars, compute resources are described, the work conforms to the NeurIPS Code of Ethics, broader impacts are not discussed because the work is theoretical, safeguards and human-subject questions are marked not applicable, existing assets are credited, new assets are documented, and LLM usage is marked not applicable.
+\begin{equation}
+            \label{eq:noise}
+           \frac{\Delta s}{\Delta t}\,\nabla V \approx \underbrace{\mu\,\nabla V}_{\text{signal}} + \underbrace{\sigma\,\frac{\Delta B}{\Delta t}\,\nabla V}_{\text{noise, std} \,\sim\, \|\sigma\,\nabla V\|/\sqrt{\Delta t}},
+\end{equation}
 
-\begin{thebibliography}{99}
-\bibitem[Awad et al.(2021)]{awad2021} Noor Awad, Neeratyoy Mallik, and Frank Hutter. DEHB: Evolutionary hyperband for scalable, robust and efficient hyperparameter optimization. In \emph{IJCAI}, pages 2147--2153, 2021.
-\bibitem[Baird(1994)]{baird1994} Leemon C. Baird. Reinforcement learning in continuous time: Advantage updating. In \emph{IEEE International Conference on Neural Networks}, volume 4, pages 2448--2453, 1994.
-\bibitem[Doya(2000)]{doya2000} Kenji Doya. Reinforcement learning in continuous time and space. \emph{Neural Computation}, 12(1):219--245, 2000.
-\bibitem[Eimer et al.(2023)]{eimer2023} Theresa Eimer, Marius Lindauer, and Roberta Raileanu. Hyperparameters in reinforcement learning and how to tune them. In \emph{ICML}, pages 9104--9149, 2023.
-\bibitem[Freeman et al.(2021)]{freeman2021} Daniel Freeman, Erik Frey, Anton Raichuk, Sertan Girgin, Igor Mordatch, and Olivier Bachem. Brax -- a differentiable physics engine for large scale rigid body simulation. In \emph{NeurIPS Datasets and Benchmarks}, 2021.
-\bibitem[Haarnoja et al.(2018)]{haarnoja2018} Tuomas Haarnoja, Aurick Zhou, Pieter Abbeel, and Sergey Levine. Soft actor-critic. In \emph{ICML}, pages 1861--1870, 2018.
-\bibitem[Hafner et al.(2019)]{hafner2019} Danijar Hafner, Timothy Lillicrap, and Jimmy Ba. Dream to control: Learning behaviors by latent imagination. \emph{arXiv:1912.01603}, 2019.
-\bibitem[Jia and Zhou(2022a)]{jia2022a} Yanwei Jia and Xun Yu Zhou. Policy gradient and actor-critic learning in continuous time and space. \emph{JMLR}, 23(275), 2022.
-\bibitem[Jia and Zhou(2022b)]{jia2022b} Yanwei Jia and Xun Yu Zhou. Policy evaluation and temporal-difference learning in continuous time and space: A martingale approach. \emph{JMLR}, 23(154), 2022.
-\bibitem[Jia and Zhou(2023)]{jia2023} Yanwei Jia and Xun Yu Zhou. Q-learning in continuous time. \emph{JMLR}, 24(161), 2023.
-\bibitem[Kim et al.(2021)]{kim2021} Jeongho Kim, Jaeuk Shin, and Insoon Yang. Hamilton-Jacobi deep Q-learning for deterministic continuous-time systems with Lipschitz continuous controls. \emph{JMLR}, 22(206), 2021.
-\bibitem[Kober et al.(2013)]{kober2013} Jens Kober, J. Andrew Bagnell, and Jan Peters. Some studies in machine learning using the game of checkers. \emph{The International Journal of Robotics Research}, 32(11):1238--1274, 2013.
-\bibitem[Mnih et al.(2016)]{mnih2016} Volodymyr Mnih, Adri\`a Puigdom\`enech Badia, Mehdi Mirza, Alex Graves, Tim Harley, Timothy P. Lillicrap, David Silver, and Koray Kavukcuoglu. Asynchronous methods for deep reinforcement learning. In \emph{ICML}, pages 1928--1937, 2016.
-\bibitem[Munos(1997)]{munos1997} R\'emi Munos. A convergent reinforcement learning algorithm in the continuous case based on a finite difference method. In \emph{IJCAI}, pages 826--831, 1997.
-\bibitem[Munos(2006)]{munos2006} R\'emi Munos. Policy gradient in continuous time. \emph{JMLR}, 7(27):771--791, 2006.
-\bibitem[Munos and Bourgine(1997)]{munos1997stochastic} R\'emi Munos and Paul Bourgine. Reinforcement learning for continuous stochastic control problems. In \emph{NeurIPS}, volume 10, 1997.
-\bibitem[Schulman et al.(2015)]{schulman2015} John Schulman, Sergey Levine, Philipp Moritz, Michael Jordan, and Pieter Abbeel. Trust region policy optimization. In \emph{ICML}, pages 1889--1897, 2015.
-\bibitem[Schulman et al.(2017)]{schulman2017} John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. \emph{arXiv:1707.06347}, 2017.
-\bibitem[Silver et al.(2018)]{silver2018} David Silver et al. Mastering chess and shogi by self-play with a general reinforcement learning algorithm. \emph{arXiv:1712.01815}, 2018.
-\bibitem[Tallec et al.(2019)]{tallec2019} Corentin Tallec, L\'eonard Blier, and Yann Ollivier. Making deep Q-learning methods robust to time discretization. In \emph{ICML}, pages 6096--6104, 2019.
-\bibitem[Tang et al.(2022)]{tang2022} Wenpin Tang, Paul Yuming Zhang, and Xun Yu Zhou. Exploratory HJB equations and their convergence. \emph{SIAM Journal on Control and Optimization}, 60, 2022.
-\bibitem[Todorov et al.(2012)]{todorov2012} Emanuel Todorov, Tom Erez, and Yuval Tassa. MuJoCo: A physics engine for model-based control. In \emph{IROS}, pages 5026--5033, 2012.
-\bibitem[Vamvoudakis and Crofton(2017)]{vamvoudakis2017} Kyriakos G. Vamvoudakis and Kevin T. Crofton. Q-learning for continuous-time linear systems. \emph{Systems \& Control Letters}, 100:14--20, 2017.
-\bibitem[Wang et al.(2020)]{wang2020} Haoran Wang, Thaleia Zariphopoulou, and Xun Yu Zhou. Reinforcement learning in continuous time and space. \emph{JMLR}, 21(198), 2020.
-\bibitem[Yildiz et al.(2021)]{yildiz2021} \c{C}a\u{g}atay Yildiz, Markus Heinonen, and Harri L\"ahdesm\"aki. Continuous-time model-based reinforcement learning. In \emph{ICML}, pages 12009--12018, 2021.
-\bibitem[Zhao et al.(2020)]{zhao2020} Hanyang Zhao, Wenpin Tang, and David D. Yao. Policy optimization for continuous reinforcement learning. In \emph{NeurIPS}, pages 13637--13663, 2020.
-\end{thebibliography}
+so the noise in the estimator grows unboundedly as $\Delta t \to 0$ and as $\sigma$ increases. This drives the optimization toward a spurious attractor at $\nabla V \to 0$, yielding a constant value function. To test this hypothesis, we ran $\beta$-dTD across a range of hyperparameter configurations (see Figure \ref{fig:merton_sweep}). The results confirm that the noise problem is more pronounced in high-diffusion settings, consistent with Equation \eqref{eq:noise}. Moreover, in the cases where $\beta$-dTD does not collapse, we are unable to confirm the claim of \cite{settai2025} that $\beta$-dTD exhibits a faster rate of improvement than standard TD (see Figure \ref{fig:faster_rate}).
 
+\begin{figure}[h]
+    \label{fig:faster_rate}
+    \centering
+    \includegraphics[width=0.7\textwidth]{media/MAE_over_time_dtd.jpeg}
+    \caption{Evolution of MAE over training steps: $\beta$-dTD does not exhibit a faster rate of improvement}
+\end{figure}
+
+
+
+
+
+
+
+\section{Methodological Extensions \& Variance Reduction}
+
+\section{Conclusion \& Future Outlook}
+
+
+
+\appendix
+
+\section{Analytical solution for the Merton Problem}
+
+
+
+\section{Figures \& Diagrams}
+
+\begin{figure}
+    \label{fig:pretrained}
+    \centering
+    \includegraphics[width=0.4\textwidth]{media/pretrained_dtd.jpeg}
+    \caption{MAE for learned value function starting from a pre-trained network}
+\end{figure}
+
+\begin{figure}[p] % 'p' forces the large figure onto its own dedicated clean page
+    \label{fig:merton_sweep}
+    \centering
+    % Top Panel: Original Paper Results
+    \begin{subfigure}[b]{\textwidth}
+        \centering
+        % Constrrain both height (using textheight) and width (to prevent warping)
+        % Using 0.40 height and 0.85 width keeps the text readable but within bounds
+        \includegraphics[width=0.85\textwidth,height=0.40\textheight,keepaspectratio]{{media/grid_dtd_high_noise.jpeg}}
+        \caption{Hyperparameter performance for $\beta$-dTD with \textbf{high} noise}
+        \label{fig:paper_res}
+    \end{subfigure}
+    
+    \vspace{0.3cm} % Reduced vertical space for page constraint
+    
+    % Bottom Panel: Your Replicated Results
+    \begin{subfigure}[b]{\textwidth}
+        \centering
+        % Matching the constraints from the top panel ensures a clean comparison
+        \includegraphics[width=0.85\textwidth,height=0.40\textheight,keepaspectratio]{media/grid_dtd_low_noise.jpeg}
+        \caption{Hyperparameter performance for $\beta$-dTD with \textbf{low} noise}
+        \label{fig:our_res}
+    \end{subfigure}
+    
+    % The space for the final main caption is now protected
+    \caption{$\beta$-dTD performace in the infinite Merton problem for different hyperparameters configuration.}
+    \label{fig:low_vs_high_noise}
+\end{figure}
+
+\clearpage
+\bibliographystyle{plainnat}
+\bibliography{references}
+	
+	
 \end{document}

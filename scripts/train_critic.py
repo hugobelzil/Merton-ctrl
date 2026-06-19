@@ -60,6 +60,8 @@ def parse_args() -> argparse.Namespace:
         ],
     )
     parser.add_argument("--beta", type=float, default=0.5)
+    parser.add_argument("--shrink-lambda", type=float, default=0.0,
+                        help="James-Stein-style shrinkage of dTD drift estimator toward 0 (λ in [0,1])")
     parser.add_argument("--num-replicas", type=int, default=1, help="K for dtd_mean / dtd_k / beta_dtd_mean / beta_dtd_k")
 
     parser.add_argument("--seed", type=int, default=0)
@@ -117,6 +119,7 @@ def main() -> None:
         device=args.device,
         log_every=args.log_every,
         num_replicas=args.num_replicas,
+        shrink_lambda=args.shrink_lambda,
     )
 
     horizon = (

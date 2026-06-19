@@ -114,6 +114,7 @@ def train_fixed_policy_critic(
             terminal_value_fn=g_fn,
             policy=policy,
             num_replicas=train_cfg.num_replicas,
+            shrink_lambda=train_cfg.shrink_lambda,
         )
         if horizon is not None:
             assert g_fn is not None

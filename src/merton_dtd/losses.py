@@ -133,6 +133,7 @@ def dtd_prediction_and_target(
     t: torch.Tensor | None = None,
     t_next: torch.Tensor | None = None,
     terminal_value_next: torch.Tensor | None = None,
+    shrink_lambda: float = 0.0,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Practical dTD decomposition matching the paper's useful form.
@@ -160,9 +161,15 @@ def dtd_prediction_and_target(
     delta_w = wealth_next - wealth
     reward_step = reward * dt
 
+    # James-Stein-style shrinkage of the per-sample drift estimator toward 0.
+    # shrink_lambda=0 → vanilla dTD; shrink_lambda=1 → zero prediction side.
+    shrink = 1.0 - shrink_lambda
+
     # Prediction side: derivative/local-dynamics terms at the current state
     # Note: time prediction is zero for infinite horizon
-    prediction = time_prediction + delta_w * Vw + 0.5 * delta_w.square() * Vww
+    prediction = (
+        time_prediction + shrink * delta_w * Vw + 0.5 * shrink * delta_w.square() * Vww
+    )
 
     with torch.no_grad():
         V_current = critic.value(wealth, t)
@@ -182,6 +189,7 @@ def dtd_residual(
     t: torch.Tensor | None = None,
     t_next: torch.Tensor | None = None,
     terminal_value_next: torch.Tensor | None = None,
+    shrink_lambda: float = 0.0,
 ) -> torch.Tensor:
     """
     Practical dTD error:
@@ -197,6 +205,7 @@ def dtd_residual(
         t=t,
         t_next=t_next,
         terminal_value_next=terminal_value_next,
+        shrink_lambda=shrink_lambda,
     )
     return pred - target
 
@@ -354,6 +363,7 @@ def compute_loss(
     terminal_value_fn: Callable[[torch.Tensor], torch.Tensor] | None = None,
     policy: "PolicyParams | None" = None,
     num_replicas: int = 1,
+    shrink_lambda: float = 0.0,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """
     Losses:
@@ -383,6 +393,7 @@ def compute_loss(
         t=t,
         t_next=t_next,
         terminal_value_next=terminal_value_next,
+        shrink_lambda=shrink_lambda,
     )
 
     td_mse = torch.mean(td.square())

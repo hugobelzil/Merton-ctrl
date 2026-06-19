@@ -145,3 +145,4 @@ class TrainConfig:
     device: str = "cpu"
     log_every: int = 100
     num_replicas: int = 1
+    shrink_lambda: float = 0.0  # James-Stein-style shrinkage of the dTD drift estimator toward 0 (λ ∈ [0,1])

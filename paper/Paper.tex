@@ -19,6 +19,7 @@
 \usepackage{float}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
+\usepackage{cleveref}
 
 \newcommand{\TODO}[1]{\textcolor{red}{TODO: #1}}
 
@@ -226,32 +227,27 @@ where $r$ is the risk-free rate, $\mu_{BS}$ the expected return of the risky ass
 
 \begin{equation}\label{Merton-cost}
 \mathbb{E}\!\left[\int_0^\infty e^{-\rho t}\, U(c_t)\,dt\right],
-\qquad U(c)=\frac{c^{1-\gamma}}{1-\gamma}, \quad 0 < \gamma < 1.
+\qquad U(c)=\frac{c^{1-\gamma}}{1-\gamma}, \quad \gamma > 0,\ \gamma \neq 1.
 \end{equation}
 
 For this choice of utility function, there is a closed-form solution \citep{merton1971optimum}. This is extremely useful, as it allows us to directly assess the quality of the learned value function, rather than relying on the evolution of the reward over training, as was necessary in the Brax experiments (where no closed-form solution exists).
 
-% For this choice of utility function, a constant relative risk aversion (CRRA) specification, there exists a closed-form solution to the Merton problem \TODO{reference}:
-%
-% \begin{equation}\label{eq:sol_Merton}
-%      \pi^* = \frac{\mu_{BS}-r}{\gamma\sigma_{BS}^2},
-%         \qquad
-%         \kappa^* = \frac{\rho-(1-\gamma)\left(r + \frac{1}{2}\frac{(\mu_{BS}-r)^2}{\gamma\sigma_{BS}^2}\right)}{\gamma}.
-% \end{equation}
-%
-% Note that the solution in \eqref{eq:sol_Merton} is constant: although the wealth invested in the risky asset and the wealth consumed vary over time, their respective *fractions* of total wealth remain fixed. Under this optimal policy, the value function also admits a closed form:
-%
-% \begin{equation}
-%      V^{\pi,\kappa}(w)=A(\pi,\kappa)\,\frac{w^{1-\gamma}}{1-\gamma},
-% \end{equation}
-%
-% where
-%
-% \begin{equation}
-%       A(\pi,\kappa)=
-%             \frac{\kappa^{1-\gamma}}
-%             {\rho-(1-\gamma)\!\left[r+\pi(\mu_{BS}-r)-\kappa-\tfrac{1}{2}\gamma\pi^2\sigma_{BS}^2\right]}.
-% \end{equation}
+Concretely, for this constant relative risk aversion (CRRA) specification the optimal constant policy is
+\begin{equation}\label{eq:sol_Merton}
+     \pi^* = \frac{\mu_{BS}-r}{\gamma\sigma_{BS}^2},
+        \qquad
+        \kappa^* = \frac{\rho-(1-\gamma)\left(r + \frac{1}{2}\frac{(\mu_{BS}-r)^2}{\gamma\sigma_{BS}^2}\right)}{\gamma}.
+\end{equation}
+
+Note that the controls in \eqref{eq:sol_Merton} are constant: although the wealth invested in the risky asset and the wealth consumed vary over time, their respective \emph{fractions} of total wealth remain fixed. Under any constant policy $(\pi,\kappa)$, the value function also admits a closed form,
+\begin{equation}\label{eq:value_Merton}
+     V^{\pi,\kappa}(w)=A(\pi,\kappa)\,\frac{w^{1-\gamma}}{1-\gamma},
+     \qquad
+      A(\pi,\kappa)=
+            \frac{\kappa^{1-\gamma}}
+            {\rho-(1-\gamma)\!\left[r+\pi(\mu_{BS}-r)-\kappa-\tfrac{1}{2}\gamma\pi^2\sigma_{BS}^2\right]},
+\end{equation}
+which is finite provided the denominator of $A(\pi,\kappa)$ is strictly positive. This is the expression we use as ground truth when computing the mean-absolute error (MAE) of the learned critic.
 
 To evaluate the dTD method, we fix the optimal policy and learn the corresponding (optimal) value function via gradient descent on the dTD loss, or one of its variants. This procedure is summarized in Algorithm \ref{pseudo:dtd}.
 
@@ -310,7 +306,7 @@ so the noise in the estimator grows unboundedly as $\Delta t \to 0$ and as $\sig
 
 \section{Methodological Extensions \& Variance Reduction}
 
-\subsection{The $K$-sample method}
+\subsection{The \texorpdfstring{$K$}{K}-sample method}
 In order to reduce the variance of the estimator in equation \eqref{eq:noise}, we use the so-called $K$-sample method. For each sampled wealth level $w_i$ during training, it consists of sampling $K$ independent transitions to the next-state wealth, denoted by $w_{i,t+\Delta t}^{(1)}, \dots, w_{i,t+\Delta t}^{(K)}$.
 
 These transitions are then averaged over the $K$ samples for each wealth $w_i$, reducing the variance of the estimator in \eqref{eq:noise} by a factor of $K$.
@@ -321,19 +317,19 @@ We however emphasize on two drawbacks of this method
     \item \textbf{Increasing computation time :} The number of computations as well as the memory-space during training are both increased by a factor of (approximately) $K$, preventing users from using arbitrarily large values of $K$.
 \end{enumerate}
 
-\subsubsection{Results of the $K$-sample method for pure dTD}
+\subsubsection{Results of the \texorpdfstring{$K$}{K}-sample method for pure dTD}
 Our main empirical findings are that the use of the method helps pure dTD to no longer collapse to a constant function in the infinite-horizon setting. Using $K=10000$ and other hyperparameters listed in \ref{supp-mat}, we obtain after 12K gradient steps the approximation of the value function presented in figure \ref{fig:k10000dTD-infinite-horizon}.
 
 This result indicates that sufficiently strong conditional averaging seems prevent the constant-collapse failure mode. However, it does not establish convergence and requires a prohibitively large number of simulated transitions over several seeds.
 
-\subsubsection{Results of the K-sample method for $\beta$-dTD}
+\subsubsection{Results of the K-sample method for \texorpdfstring{$\beta$}{beta}-dTD}
 
 Several experiments were conducted to test the method on the loss of $\beta$ -dTD in the infinite horizon setting. Our first empirical findings were that using small values of $K$ does not consistently help the $\beta$-dTD to achieve better results. Here, $K=32$ samples were used at each transition. The results reported in table \ref{tab:beta_dtd_results} show that noticeable improvement happens where $\beta=0.9$ where the loss essentially consists of the dTD component.
 
 \subsection{Finite Horizon Merton problems}
 Our next methodological extensions consists of studying the finite horizon formulation of \eqref{Merton-cost}. At some $T<\infty$, a terminal condition is imposed. Although we do not explicitly list it here, the value function still admits a known closed-form expression, which now also depends on time. This additional temporal structure may regularize the learning problem in the sense that the terminal condition anchors the value function at $t=T$, while the critic must learn a coherent evolution of the value function across both time and wealth. This differs from the infinite-horizon setting, where a constant function can more easily emerge as a stationary solution of the dTD problem.
 
-\subsubsection{$\beta$-dTD compared to TD in finite horizon}
+\subsubsection{\texorpdfstring{$\beta$}{beta}-dTD compared to TD in finite horizon}
 We therefore compare standard TD and $\beta$-dTD in the finite-horizon Merton setting across several learning rates, batch sizes, random seeds and across two distinct levels of volatility. This experiment was run using $K=1$ sample per wealth in each batch.
 
 
@@ -355,7 +351,7 @@ We therefore compare standard TD and $\beta$-dTD in the finite-horizon Merton se
     \end{tabular}
 \end{table}
 
-The results in Table~\ref{tab:finite_horizon_hpo} show that $\beta$-dTD outperforms standard TD at both volatility levels, even without conditional averaging (\(K=1\)). The improvement is substantially larger in the low-volatility setting, where a relatively high differential weight, $\beta=0.75$, is selected. When volatility increases to $\sigma=0.20$, the optimal weight decreases to $\beta=0.25$ and the performance gain becomes more modest. This suggests that the terminal condition and explicit time dependence improve the stability of the differential component without entirely removing its sensitivity to diffusion noise. It is also interesting to highlight that in the high volatility setting, the parameter search selects a somewhat low value of $\beta$ (0.35) which could indicate that such a level of diffusion is still too strong for $\beta$-dTD and that the network relies more consistently on the TD component of the loss. A visual inspection of the results of this hyperparameter sweep is available in the appendix (Figure \ref{fig:finite-horizon-sigma-comparison}).
+The results in Table~\ref{tab:finite_horizon_hpo} show that $\beta$-dTD outperforms standard TD at both volatility levels, even without conditional averaging (\(K=1\)). The improvement is substantially larger in the low-volatility setting, where a relatively high differential weight, $\beta=0.75$, is selected. When volatility increases to $\sigma=0.20$, the optimal weight decreases to $\beta=0.25$ and the performance gain becomes more modest. This suggests that the terminal condition and explicit time dependence improve the stability of the differential component without entirely removing its sensitivity to diffusion noise. It is also interesting to highlight that in the high volatility setting, the parameter search selects a somewhat low value of $\beta$ (0.25) which could indicate that such a level of diffusion is still too strong for $\beta$-dTD and that the network relies more consistently on the TD component of the loss. A visual inspection of the results of this hyperparameter sweep is available in the appendix (Figure \ref{fig:finite-horizon-sigma-comparison}).
 
 \section{Conclusion \& Future Outlook}
 
@@ -416,7 +412,7 @@ Several directions for future work follow naturally from these observations. Fir
 \begin{figure}[h]
     \centering
     \includegraphics[width=0.7\textwidth]{media/K_10000.png}
-    \caption{Value function approximation learned, using $10$K samples with naive-dTD in the infinite horizon setup. Batch size 500 with 12K gradient steps, and $\Delta t=1/252$. \TODO{specify $\sigma$}}
+    \caption{Value function approximation learned using $K=10{,}000$ samples with pure dTD in the infinite-horizon setup. Batch size 512, 12K gradient steps, $\Delta t=1/252$, $\sigma=0.20$.}
     \label{fig:k10000dTD-infinite-horizon}
 \end{figure}
 

@@ -31,7 +31,7 @@
   \And
   Fynn Jonathan Starke \\
   \And
-  Alvaro Zamanillo \\
+  Álvaro Zamanillo \\
 }
 
 \begin{document}
@@ -224,12 +224,12 @@ The Merton problem consists of maximizing the utility derived from consumption. 
 
 where $r$ is the risk-free rate, $\mu_{BS}$ the expected return of the risky asset, $\sigma_{BS}$ its volatility, $\pi_t$ the fraction of wealth invested in the risky asset, and $\kappa_t$ the fraction of wealth consumed. The objective is to maximize the expected discounted utility of consumption:
 
-\begin{equation}
-E\!\left[\int_0^\infty e^{-\rho t}\, U(c_t)\,dt\right],
+\begin{equation}\label{Merton-cost}
+\mathbb{E}\!\left[\int_0^\infty e^{-\rho t}\, U(c_t)\,dt\right],
 \qquad U(c)=\frac{c^{1-\gamma}}{1-\gamma}, \quad 0 < \gamma < 1.
 \end{equation}
 
-For this choice of utility function, there is a closed-form solution (\cite{merton1971optimum}). This is extremely useful, as it allows us to directly assess the quality of the learned value function, rather than relying on the evolution of the reward over training, as was necessary in the Brax experiments (where no closed-form solution exists).\TODO{add a brief appendix with the formulas?}
+For this choice of utility function, there is a closed-form solution (\cite{merton1971optimum}). This is extremely useful, as it allows us to directly assess the quality of the learned value function, rather than relying on the evolution of the reward over training, as was necessary in the Brax experiments (where no closed-form solution exists).
 
 % For this choice of utility function, a constant relative risk aversion (CRRA) specification, there exists a closed-form solution to the Merton problem \TODO{reference}:
 %
@@ -256,7 +256,6 @@ For this choice of utility function, there is a closed-form solution (\cite{mert
 To evaluate the dTD method, we fix the optimal policy and learn the corresponding (optimal) value function via gradient descent on the dTD loss, or one of its variants. This procedure is summarized in Algorithm \ref{pseudo:dtd}.
 
 \begin{algorithm}[H]
-        \label{pseudo:dtd}
         \caption{Infinite-Horizon dTD Learning}
         \begin{algorithmic}[1]
 
@@ -268,6 +267,7 @@ To evaluate the dTD method, we fix the optimal policy and learn the correspondin
             \State Update $\theta$ via gradient descent on $\mathcal{L}$
             \State $w_t \leftarrow w_{t+\Delta t}$
         \EndFor
+        \label{pseudo:dtd}
 
         \end{algorithmic}
 \end{algorithm}
@@ -278,12 +278,12 @@ When pure dTD is used as the loss for learning the value function, the neural ne
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.3\linewidth]{media/dtd_value_fit.png}
-    \caption{Value function learned with the pure dTD loss}
+    \includegraphics[width=0.5\linewidth]{media/dtd_value_fit.png}
+    \caption{Value function learned with the pure dTD loss collapses to a constant}
     \label{fig:collapse}
 \end{figure}
 
-The cause of this behavior was already outlined earlier. The drift estimator in the dTD residual (Equation \eqref{eq:residual}) is asymptotically unbiased but highly noisy. More precisely, the prediction term in the loss is given by
+The cause of this behavior was briefly presented earlier. The drift estimator in the dTD residual (Equation \eqref{eq:residual}) is asymptotically unbiased but highly noisy. More precisely, the prediction term in the loss is given by
 $$\text{pred} = \frac{\Delta s}{\Delta t}\,\nabla V(s_t) + \frac{1}{2}\frac{(\Delta s)^2}{\Delta t}\,\nabla^2 V(s_t).$$
 
 Under an Euler–Maruyama discretization, the first term of this prediction can be decomposed as
@@ -293,13 +293,13 @@ Under an Euler–Maruyama discretization, the first term of this prediction can 
            \frac{\Delta s}{\Delta t}\,\nabla V \approx \underbrace{\mu\,\nabla V}_{\text{signal}} + \underbrace{\sigma\,\frac{\Delta B}{\Delta t}\,\nabla V}_{\text{noise, std} \,\sim\, \|\sigma\,\nabla V\|/\sqrt{\Delta t}},
 \end{equation}
 
-so the noise in the estimator grows unboundedly as $\Delta t \to 0$ and as $\sigma$ increases. This drives the optimization toward a spurious attractor at $\nabla V \to 0$, yielding a constant value function. To test this hypothesis, we ran $\beta$-dTD across a range of hyperparameter configurations (see Figure \ref{fig:merton_sweep}). The results confirm that the noise problem is more pronounced in high-diffusion settings, consistent with Equation \eqref{eq:noise}. Moreover, in the cases where $\beta$-dTD does not collapse, we are unable to confirm the claim of \cite{settai2025} that $\beta$-dTD exhibits a faster rate of improvement than standard TD (see Figure \ref{fig:faster_rate}).
+so the noise in the estimator grows unboundedly as $\Delta t \to 0$ and as $\sigma$ increases. This drives the optimization toward a spurious attractor at $\nabla V \to 0$, yielding a constant value function. To test this hypothesis, we ran $\beta$-dTD across a range of hyperparameter configurations (see Figure \ref{fig:low_vs_high_noise}). The results confirm that the noise problem is more pronounced in high-diffusion settings, consistent with Equation \eqref{eq:noise}. Moreover, in the cases where $\beta$-dTD does not collapse, we are unable to confirm the claim of \cite{settai2025} that $\beta$-dTD exhibits a faster rate of improvement than standard TD (see Figure \ref{fig:faster_rate}). Thus, we conclude that the dTD method as presented in \cite{settai2025} must be modified; this is the main topic of the next section.
 
 \begin{figure}[h]
-    \label{fig:faster_rate}
     \centering
     \includegraphics[width=0.7\textwidth]{media/MAE_over_time_dtd.jpeg}
     \caption{Evolution of MAE over training steps: $\beta$-dTD does not exhibit a faster rate of improvement}
+    \label{fig:faster_rate}
 \end{figure}
 
 
@@ -310,23 +310,73 @@ so the noise in the estimator grows unboundedly as $\Delta t \to 0$ and as $\sig
 
 \section{Methodological Extensions \& Variance Reduction}
 
+\subsection{The $K$-sample method}
+In order to reduce the variance of the estimator in equation \eqref{eq:noise}, we use the so-called $K$-sample method. For each sampled wealth level $w_i$ during training, it consists of sample $K$ independent transitions to the next-state wealth, denoted by $w_{i,t+\Delta t}^{(1)}, \dots, w_{i,t+\Delta t}^{(K)}$.
+
+These transitions are then averaged over the $K$ samples for each wealth $w_i$, allowing to reduce the variance of the estimator in \eqref{eq:noise} by a factor of $K^{-1/2}$ (do we expect more details here?)
+
+We however emphasize on two drawbacks of this method
+\begin{enumerate}
+    \item \textbf{Financially unrealistic :} This method requires to be able to sample $K$ times from the conditional distribution $w_{i+\Delta t} |w_i$. In a financial context, we would rather observe several \textit{unique} trajectories of the stock without knowing this conditional distribution or being able to infer it. Therefore, the $K$-samples method is justified when a simulator or generative environment is used.
+    \item \textbf{Increasing computation time :} The number of computations as well as the memory-space during training are both increased by a factor of (approximately) $K$, refraining users to use arbitrarily large values of $K$.
+\end{enumerate}
+
+\subsubsection{Results of the $K$-sample method for pure dTD}
+Our main empirical findings are that the use of the method helps pure dTD to not collapse to a constant function anymore in the infinite horizon anymore. Using $K=10000$ and other hyperparameters listed in \ref{supp-mat}, we obtain after 12K gradient steps the approximation of the value function presented in figure \ref{fig:k10000dTD-infinite-horizon}. 
+
+This result indicates that sufficiently strong conditional averaging seems prevent the constant-collapse failure mode. However, it does not establish convergence and requires a prohibitively large number of simulated transitions over several seeds.
+
+\subsubsection{Results of the K-sample method for $\beta$-dTD}
+
+Several experiments were conducted to test the method on the loss of $\beta$ -dTD in the infinite horizon setting. Our first empirical findings were that using substantially low values of $K$ does not consistently help the $\beta$-dTD to achieve better results. Here, $K=32$ samples were used at each transition. The results reported in table \ref{tab:beta_dtd_results} show that noticeable improvement happens where $\beta=0.9$ where the loss essentially consists of the dTD component.
+
+\subsection{Finite Horizon Merton problems}
+Our next methodological extensions consists of studying the finite horizon formulation of \eqref{Merton-cost}. At some $T<\infty$, a terminal condition is imposed. Although we do not explicitly list it here, the value function still admits a known closed-form expression, which now also depends on time. This additional temporal structure may regularize the learning problem in the sense that the terminal condition anchors the value function at $t=T$, while the critic must learn a coherent evolution of the value function across both time and wealth. This differs from the infinite-horizon setting, where a constant function can more easily emerge as a stationary solution of the dTD problem.
+
+\subsubsection{$\beta$-dTD compared to TD in finite horizon}
+We therefore compare standard TD and $\beta$-dTD in the finite-horizon Merton setting across several learning rates, batch sizes, random seeds and across two distinct levels of volatility. This experiment was ran using $K=1$ sample per wealth in each batch. 
+
+
+\begin{table}[t]
+    \centering
+    \caption{Best finite-horizon performance of TD and $\beta$-dTD, averaged over three random seeds.}
+    \label{tab:finite_horizon_hpo}
+    \small
+    \begin{tabular}{ccccc}
+        \toprule
+        $\sigma$
+        & Best TD MAE
+        & Best $\beta$-dTD MAE
+        & Best $\beta$ \\
+        \midrule
+        $0.05$ & $0.110$ & $\mathbf{0.082}$ & $0.75$  \\
+        $0.20$ & $0.111$ & $\mathbf{0.100}$ & $0.25$ \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+The results in Table~\ref{tab:finite_horizon_hpo} show that $\beta$-dTD outperforms standard TD at both volatility levels, even without conditional averaging (\(K=1\)). The improvement is substantially larger in the low-volatility setting, where a relatively high differential weight, $\beta=0.75$, is selected. When volatility increases to $\sigma=0.20$, the optimal weight decreases to $\beta=0.25$ and the performance gain becomes more modest. This suggests that the terminal condition and explicit time dependence improve the stability of the differential component without entirely removing its sensitivity to diffusion noise. It is also interesting to highlight that in the high volatility setting, the parameter search selects a somewhat low value of $\beta$ (0.35) which could indicate that such a level of diffusion is still too strong for $\beta$-dTD and that the network relies more consistently on the TD component of the loss. A visual inspection of the results of this hyperparameter sweep is available in the appendix (Figure \ref{fig:finite-horizon-sigma-comparison}).
+
+\subsubsection{$K$-samples method in finite horizon}
+\newpage %temporary, will rmeove that later
+
+
 \section{Conclusion \& Future Outlook}
 
 
+\newpage
 
 \appendix
 
-\section{Analytical solution for the Merton Problem}
 
+%\section{Figures \& Diagram}{\label{Figs-and-diags}}
+\section{Supplementary material}{\label{supp-mat}}
 
-
-\section{Figures \& Diagrams}
-
-\begin{figure}
-    \label{fig:pretrained}
+\begin{figure}[h]
     \centering
-    \includegraphics[width=0.4\textwidth]{media/pretrained_dtd.jpeg}
-    \caption{MAE for learned value function starting from a pre-trained network}
+    \includegraphics[width=0.6\textwidth]{media/pretrained_dtd.jpeg}
+    \caption{MAE for learned value function starting from a pre-trained network. As soon as TD loss is used, the error starts to grow.}
+    \label{fig:pretrained}
 \end{figure}
 
 \begin{figure}[p] % 'p' forces the large figure onto its own dedicated clean page
@@ -339,7 +389,7 @@ so the noise in the estimator grows unboundedly as $\Delta t \to 0$ and as $\sig
         % Using 0.40 height and 0.85 width keeps the text readable but within bounds
         \includegraphics[width=0.85\textwidth,height=0.40\textheight,keepaspectratio]{{media/grid_dtd_high_noise.jpeg}}
         \caption{Hyperparameter performance for $\beta$-dTD with \textbf{high} noise}
-        \label{fig:paper_res}
+        \label{fig:high_noise}
     \end{subfigure}
     
     \vspace{0.3cm} % Reduced vertical space for page constraint
@@ -350,13 +400,68 @@ so the noise in the estimator grows unboundedly as $\Delta t \to 0$ and as $\sig
         % Matching the constraints from the top panel ensures a clean comparison
         \includegraphics[width=0.85\textwidth,height=0.40\textheight,keepaspectratio]{media/grid_dtd_low_noise.jpeg}
         \caption{Hyperparameter performance for $\beta$-dTD with \textbf{low} noise}
-        \label{fig:our_res}
+        \label{fig:low_noise}
     \end{subfigure}
     
     % The space for the final main caption is now protected
     \caption{$\beta$-dTD performace in the infinite Merton problem for different hyperparameters configuration.}
     \label{fig:low_vs_high_noise}
 \end{figure}
+
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{media/dTD_K10000_value_fit.png}
+    \caption{Value function approximation learned, using $10$K samples with naive-dTD in the infinite horizon setup. Batch size 500 with 12K gradient steps, and $\Delta t=1/252, \sigma=\textbf{??/}$}
+    \label{fig:k10000dTD-infinite-horizon}
+\end{figure}
+
+\begin{table}[htbp]
+\centering
+\caption{MAE averaged over 3 seeds across different parameters $\beta$ and dTD configurations. $K=32$, batch size 256, $\sigma=0.05$, $\Delta t=1/252$. The second column corresponds to the averaged MAE for the classic $\beta$-dTD loss, i.e. $K=1$. }
+\label{tab:beta_dtd_results}
+\begin{tabular}{ccc}
+\toprule
+\textbf{\boldmath$\beta$} & \textbf{\boldmath$\beta$-dTD} & \textbf{\boldmath$(K=32)$ $\beta$-dTD-mean} \\
+\midrule
+0.25 & $\approx 10.1$ & $\approx 10.5$ \\
+0.50 & $\approx 10.0$ & $\approx 10.7$ \\
+0.75 & $\approx 11.2$ & $\approx 10.9$ \\
+0.90 & $\approx 20.2$            & $\approx 10.3$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[p] % 'p' forces the large figure onto its own dedicated clean page
+    \label{fig:merton_sweep}
+    \centering
+    % Top Panel: Original Paper Results
+    \begin{subfigure}[b]{\textwidth}
+        \centering
+        % Constrrain both height (using textheight) and width (to prevent warping)
+        % Using 0.40 height and 0.85 width keeps the text readable but within bounds
+        \includegraphics[width=0.85\textwidth,height=0.40\textheight,keepaspectratio]{{media/sigma0.05_best_mae_vs_beta.png}}
+        \caption{Hyperparameter performance for $\beta$-dTD with \textbf{low} noise}
+        \label{fig:finite-horizon-high-noise}
+    \end{subfigure}
+    
+    \vspace{0.3cm} % Reduced vertical space for page constraint
+    
+    % Bottom Panel: Your Replicated Results
+    \begin{subfigure}[b]{\textwidth}
+        \centering
+        % Matching the constraints from the top panel ensures a clean comparison
+        \includegraphics[width=0.85\textwidth,height=0.40\textheight,keepaspectratio]{media/sigma0.2_best_mae_vs_beta.png}
+        \caption{Hyperparameter performance for $\beta$-dTD with \textbf{high} noise}
+        \label{fig:finite-horizon-low-noise}
+    \end{subfigure}
+    
+    % The space for the final main caption is now protected
+    \caption{$\beta$-dTD performace in the finite horizon Merton problem for different hyperparameters configuration.}
+    \label{fig:finite-horizon-sigma-comparison}
+\end{figure}
+
+
 
 \clearpage
 \bibliographystyle{plainnat}
